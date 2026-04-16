@@ -235,10 +235,11 @@ async function enumerateMics() {
     const prevSelected = selectedMicId;
     micList.innerHTML = "";
 
-    // Find the "default" device (deviceId === "default" in Chrome)
+    // Sort so "default" device appears first
     const hasDefault = mics.some(m => m.deviceId === "default");
+    const sorted = [...mics].sort((a, b) => (a.deviceId === "default" ? -1 : b.deviceId === "default" ? 1 : 0));
 
-    mics.forEach((mic, i) => {
+    sorted.forEach((mic, i) => {
       let label = mic.label || `Microphone ${i + 1}`;
       // Shorten "Default - Realtek USB2.0 Audio" to just "Default"
       if (mic.deviceId === "default") label = "Default";
