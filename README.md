@@ -10,6 +10,12 @@ OpenAI's Whisper model produces significantly better transcriptions, but using i
 
 Whisper It wraps all of that into a simple web app: open it in your browser, record or upload, and get your text. It costs nothing to run, your audio never leaves your network, and there's zero setup beyond `docker compose up`.
 
+## Screenshots
+
+| Start | After transcription |
+|-------|-------------------|
+| ![Start screen](docs/screenshot-start.png) | ![Transcription result](docs/screenshot-transcribed.png) |
+
 ## Features
 
 - **Record or upload** -- Record directly from your mic (with a live audio level visualizer and timer) or drag-and-drop / browse for an audio file
