@@ -1,0 +1,11 @@
+services:
+  whisper-it:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - whisper-models:/models
+    restart: unless-stopped
+
+volumes:
+  whisper-models:
