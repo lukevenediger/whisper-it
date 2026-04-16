@@ -297,10 +297,14 @@ recordBtn.addEventListener("click", async () => {
     dropZone.style.display = "none";
     recordingViz.classList.add("visible");
 
+    // Force reflow so offsetWidth reflects the now-visible element
+    void vizCanvas.offsetWidth;
+
     // Size canvas to actual pixel dimensions for crisp rendering
     const dpr = window.devicePixelRatio || 1;
     vizCanvas.width = vizCanvas.offsetWidth * dpr;
     vizCanvas.height = vizCanvas.offsetHeight * dpr;
+    vizCtx.setTransform(1, 0, 0, 1, 0, 0);
     vizCtx.scale(dpr, dpr);
 
     startVisualizer(stream);
@@ -317,6 +321,8 @@ async function doTranscribe(modelOverride) {
   if (!currentFile) return;
 
   transcribeBtn.disabled = true;
+  recordBtn.disabled = true;
+  retranscribeBtn.disabled = true;
   spinner.classList.add("visible");
   statusEl.textContent = "Starting...";
   errorEl.classList.remove("visible");
@@ -383,6 +389,8 @@ async function doTranscribe(modelOverride) {
     statusEl.textContent = "";
     progressContainer.classList.remove("visible");
     transcribeBtn.disabled = false;
+    recordBtn.disabled = false;
+    retranscribeBtn.disabled = false;
   }
 }
 
@@ -407,9 +415,13 @@ retranscribeBtn.addEventListener("click", () => doTranscribe(retranscribeModel.v
 
 // --- Copy + Share ---
 
-copyBtn.addEventListener("click", () => {
-  navigator.clipboard.writeText(transcript.textContent);
-  copyBtn.textContent = "Copied!";
+copyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(transcript.textContent);
+    copyBtn.textContent = "Copied!";
+  } catch {
+    copyBtn.textContent = "Failed";
+  }
   setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
 });
 
