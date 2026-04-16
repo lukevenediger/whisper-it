@@ -40,6 +40,18 @@
   .drop-zone input { display: none; }
   .file-name { color: #5b8def; font-weight: 500; word-break: break-all; }
 
+  .recording-viz {
+    display: none; flex-direction: column; align-items: center; gap: 0.75rem;
+    padding: 1.5rem; border: 2px solid #d32f2f; border-radius: 8px;
+    background: rgba(211,47,47,0.05); margin-bottom: 1rem;
+  }
+  .recording-viz.visible { display: flex; }
+  .recording-viz canvas { width: 100%; height: 60px; border-radius: 4px; }
+  .recording-timer {
+    font-size: 1.5rem; font-weight: 600; color: #d32f2f;
+    font-variant-numeric: tabular-nums;
+  }
+
   .result {
     background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
     padding: 1.25rem; margin-top: 1rem; display: none; position: relative;
@@ -47,12 +59,22 @@
   .result.visible { display: block; }
   .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
   .result-meta { font-size: 0.8rem; color: #888; }
-  .copy-btn {
+  .result-actions { display: flex; gap: 0.5rem; }
+  .action-btn {
     padding: 0.3rem 0.6rem; font-size: 0.8rem; border-radius: 4px;
     background: #252525; border: 1px solid #444; color: #ccc; cursor: pointer;
   }
-  .copy-btn:hover { background: #333; }
+  .action-btn:hover { background: #333; }
   .transcript { white-space: pre-wrap; line-height: 1.6; font-size: 0.95rem; }
+
+  .retranscribe {
+    display: none; align-items: center; gap: 0.5rem;
+    margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #333;
+    font-size: 0.85rem; color: #888; flex-wrap: wrap;
+  }
+  .retranscribe.visible { display: flex; }
+  .retranscribe select { padding: 0.3rem 0.5rem; font-size: 0.85rem; }
+  .retranscribe button { padding: 0.3rem 0.75rem; font-size: 0.85rem; }
 
   .spinner {
     display: none; margin: 1.5rem auto; width: 32px; height: 32px;
@@ -62,6 +84,16 @@
   .spinner.visible { display: block; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .status { text-align: center; color: #888; margin-top: 0.5rem; font-size: 0.85rem; }
+
+  .progress-bar-container {
+    width: 60%; margin: 0.5rem auto 0; background: #252525;
+    border-radius: 4px; height: 6px; overflow: hidden; display: none;
+  }
+  .progress-bar-container.visible { display: block; }
+  .progress-bar {
+    height: 100%; background: #5b8def; border-radius: 4px;
+    transition: width 0.3s ease; width: 0%;
+  }
 
   .error { color: #ef5350; background: rgba(239,83,80,0.1); padding: 0.75rem; border-radius: 6px; margin-top: 1rem; display: none; }
   .error.visible { display: block; }
@@ -88,16 +120,32 @@
     <p>Drop audio file here or click to browse</p>
   </div>
 
+  <div class="recording-viz" id="recordingViz">
+    <canvas id="vizCanvas"></canvas>
+    <div class="recording-timer" id="recordingTimer">00:00</div>
+  </div>
+
   <div class="spinner" id="spinner"></div>
   <div class="status" id="status"></div>
+  <div class="progress-bar-container" id="progressContainer">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
   <div class="error" id="error"></div>
 
   <div class="result" id="result">
     <div class="result-header">
       <span class="result-meta" id="meta"></span>
-      <button class="copy-btn" id="copyBtn">Copy</button>
+      <div class="result-actions">
+        <button class="action-btn" id="copyBtn">Copy</button>
+        <button class="action-btn" id="shareBtn" style="display:none">Share</button>
+      </div>
     </div>
     <div class="transcript" id="transcript"></div>
+    <div class="retranscribe" id="retranscribe">
+      <span>Re-transcribe with:</span>
+      <select id="retranscribeModel"></select>
+      <button id="retranscribeBtn" class="btn-primary">Re-transcribe</button>
+    </div>
   </div>
 </div>
 
@@ -108,19 +156,31 @@ const fileInput = $("fileInput");
 const transcribeBtn = $("transcribeBtn");
 const recordBtn = $("recordBtn");
 const spinner = $("spinner");
-const status = $("status");
+const statusEl = $("status");
 const errorEl = $("error");
 const resultEl = $("result");
 const transcript = $("transcript");
 const meta = $("meta");
 const copyBtn = $("copyBtn");
+const shareBtn = $("shareBtn");
 const modelSelect = $("model");
+const recordingViz = $("recordingViz");
+const vizCanvas = $("vizCanvas");
+const vizCtx = vizCanvas.getContext("2d");
+const recordingTimer = $("recordingTimer");
+const progressContainer = $("progressContainer");
+const progressBar = $("progressBar");
+const retranscribeEl = $("retranscribe");
+const retranscribeModel = $("retranscribeModel");
+const retranscribeBtn = $("retranscribeBtn");
 
 let currentFile = null;
 let mediaRecorder = null;
 let audioChunks = [];
+let lastResult = null;
 
-// File upload
+// --- File upload ---
+
 dropZone.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
 
@@ -139,7 +199,76 @@ function setFile(file) {
   transcribeBtn.disabled = false;
 }
 
-// Recording
+// --- Recording with visualizer + timer ---
+
+let audioContext = null;
+let analyser = null;
+let animFrameId = null;
+let timerInterval = null;
+
+function startVisualizer(stream) {
+  audioContext = new AudioContext();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 64;
+  const source = audioContext.createMediaStreamSource(stream);
+  source.connect(analyser);
+
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+
+  function draw() {
+    animFrameId = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = vizCanvas.width / dpr;
+    const h = vizCanvas.height / dpr;
+    vizCtx.clearRect(0, 0, vizCanvas.width, vizCanvas.height);
+
+    const barCount = 20;
+    const gap = 3;
+    const barWidth = (w - gap * (barCount - 1)) / barCount;
+    const step = Math.max(1, Math.floor(bufferLength / barCount));
+
+    for (let i = 0; i < barCount; i++) {
+      const val = dataArray[i * step] / 255;
+      const barH = Math.max(2, val * h);
+      const x = i * (barWidth + gap);
+      const y = (h - barH) / 2;
+
+      vizCtx.fillStyle = `rgba(211, 47, 47, ${0.4 + val * 0.6})`;
+      vizCtx.beginPath();
+      vizCtx.roundRect(x, y, barWidth, barH, 2);
+      vizCtx.fill();
+    }
+  }
+  draw();
+}
+
+function stopVisualizer() {
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+  if (audioContext) audioContext.close();
+  audioContext = null;
+  analyser = null;
+  animFrameId = null;
+}
+
+function startTimer() {
+  const startTime = Date.now();
+  recordingTimer.textContent = "00:00";
+  timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
+    const s = String(elapsed % 60).padStart(2, "0");
+    recordingTimer.textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+}
+
 recordBtn.addEventListener("click", async () => {
   if (mediaRecorder && mediaRecorder.state === "recording") {
     mediaRecorder.stop();
@@ -152,56 +281,155 @@ recordBtn.addEventListener("click", async () => {
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
+      stopVisualizer();
+      stopTimer();
       const blob = new Blob(audioChunks, { type: "audio/webm" });
       const file = new File([blob], "recording.webm", { type: "audio/webm" });
       setFile(file);
       recordBtn.classList.remove("recording");
       recordBtn.textContent = "Record";
+      dropZone.style.display = "";
+      recordingViz.classList.remove("visible");
     };
     mediaRecorder.start();
     recordBtn.classList.add("recording");
     recordBtn.textContent = "Stop";
+    dropZone.style.display = "none";
+    recordingViz.classList.add("visible");
+
+    // Size canvas to actual pixel dimensions for crisp rendering
+    const dpr = window.devicePixelRatio || 1;
+    vizCanvas.width = vizCanvas.offsetWidth * dpr;
+    vizCanvas.height = vizCanvas.offsetHeight * dpr;
+    vizCtx.scale(dpr, dpr);
+
+    startVisualizer(stream);
+    startTimer();
   } catch (err) {
     showError("Microphone access denied.");
   }
 });
 
-// Transcribe
-transcribeBtn.addEventListener("click", async () => {
+// --- Transcribe with SSE streaming ---
+
+async function doTranscribe(modelOverride) {
+  const modelToUse = modelOverride || modelSelect.value;
   if (!currentFile) return;
 
   transcribeBtn.disabled = true;
   spinner.classList.add("visible");
-  status.textContent = "Transcribing... (first run downloads the model)";
+  statusEl.textContent = "Starting...";
   errorEl.classList.remove("visible");
   resultEl.classList.remove("visible");
+  progressContainer.classList.remove("visible");
+  progressBar.style.width = "0%";
 
   const form = new FormData();
   form.append("audio", currentFile);
-  form.append("model", modelSelect.value);
+  form.append("model", modelToUse);
 
   try {
     const res = await fetch("/api/transcribe", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Transcription failed");
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || "Transcription failed");
+    }
 
-    transcript.textContent = data.text;
-    meta.textContent = `${data.language} \u2022 ${formatDuration(data.duration)} \u2022 ${data.segments.length} segments \u2022 ${modelSelect.value} model`;
-    resultEl.classList.add("visible");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (payload.status === "loading_model") {
+          statusEl.textContent = "Loading model...";
+        } else if (payload.status === "downloading") {
+          statusEl.textContent = `Downloading model... ${payload.progress}%`;
+          progressContainer.classList.add("visible");
+          progressBar.style.width = `${payload.progress}%`;
+        } else if (payload.status === "transcribing") {
+          progressContainer.classList.remove("visible");
+          statusEl.textContent = "Transcribing...";
+        } else if (payload.status === "result") {
+          lastResult = {
+            text: payload.text, segments: payload.segments,
+            language: payload.language, duration: payload.duration,
+            model: modelToUse,
+          };
+          transcript.textContent = payload.text;
+          meta.textContent = `${payload.language} \u2022 ${formatDuration(payload.duration)} \u2022 ${payload.segments.length} segments \u2022 ${modelToUse} model`;
+          resultEl.classList.add("visible");
+          updateRetranscribeUI(modelToUse);
+        } else if (payload.status === "error") {
+          throw new Error(payload.error);
+        }
+      }
+    }
   } catch (err) {
     showError(err.message);
   } finally {
     spinner.classList.remove("visible");
-    status.textContent = "";
+    statusEl.textContent = "";
+    progressContainer.classList.remove("visible");
     transcribeBtn.disabled = false;
   }
-});
+}
+
+transcribeBtn.addEventListener("click", () => doTranscribe());
+
+// --- Re-transcribe ---
+
+function updateRetranscribeUI(usedModel) {
+  retranscribeModel.innerHTML = "";
+  const models = ["tiny", "base", "small", "medium", "large-v3"];
+  for (const m of models) {
+    if (m === usedModel) continue;
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    retranscribeModel.appendChild(opt);
+  }
+  retranscribeEl.classList.add("visible");
+}
+
+retranscribeBtn.addEventListener("click", () => doTranscribe(retranscribeModel.value));
+
+// --- Copy + Share ---
 
 copyBtn.addEventListener("click", () => {
   navigator.clipboard.writeText(transcript.textContent);
   copyBtn.textContent = "Copied!";
   setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
 });
+
+if (navigator.share) {
+  shareBtn.style.display = "";
+}
+
+shareBtn.addEventListener("click", async () => {
+  try {
+    await navigator.share({ text: transcript.textContent });
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      navigator.clipboard.writeText(transcript.textContent);
+      shareBtn.textContent = "Copied!";
+      setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
+    }
+  }
+});
+
+// --- Helpers ---
 
 function showError(msg) {
   errorEl.textContent = msg;
