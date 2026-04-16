@@ -213,8 +213,7 @@ function setFile(file) {
 
 function setFileAndTranscribe(file) {
   setFile(file);
-  renderWaveform(file);
-  doTranscribe();
+  renderWaveform(file).then(() => doTranscribe());
 }
 
 // --- Waveform rendering ---
@@ -277,6 +276,22 @@ async function renderWaveform(file) {
 }
 
 // --- Recording with visualizer + timer ---
+
+// Detect best supported recording format
+function getRecordingMimeType() {
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/mp4",
+    "",  // browser default
+  ];
+  for (const t of types) {
+    if (!t || (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(t))) return t;
+  }
+  return "";
+}
+const recordingMimeType = getRecordingMimeType();
 
 let audioContext = null;
 let analyser = null;
@@ -364,22 +379,24 @@ recordBtn.addEventListener("click", async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+    const recorderOpts = recordingMimeType ? { mimeType: recordingMimeType } : undefined;
+    mediaRecorder = new MediaRecorder(stream, recorderOpts);
+    const actualMime = mediaRecorder.mimeType || "audio/webm";
+    const ext = actualMime.includes("mp4") ? "m4a" : actualMime.includes("ogg") ? "ogg" : "webm";
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
       stopVisualizer();
       stopTimer();
-      const blob = new Blob(audioChunks, { type: "audio/webm" });
-      const file = new File([blob], "recording.webm", { type: "audio/webm" });
+      const blob = new Blob(audioChunks, { type: actualMime });
+      const file = new File([blob], `recording.${ext}`, { type: actualMime });
       setFile(file);
       recordBtn.classList.remove("recording");
       recordBtn.textContent = "Record";
       dropZone.style.display = "";
       recordingViz.classList.remove("visible");
-      // Auto-transcribe after recording
-      renderWaveform(file);
-      doTranscribe();
+      // Auto-transcribe after recording (render waveform first, then transcribe)
+      renderWaveform(file).then(() => doTranscribe());
     };
     mediaRecorder.start();
     recordBtn.classList.add("recording");
