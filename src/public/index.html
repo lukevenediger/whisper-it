@@ -52,6 +52,13 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .waveform-container {
+    display: none; margin-bottom: 1rem; border: 1px solid #333;
+    border-radius: 8px; overflow: hidden; background: #1a1a1a;
+  }
+  .waveform-container.visible { display: block; }
+  .waveform-container canvas { width: 100%; height: 80px; display: block; }
+
   .result {
     background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
     padding: 1.25rem; margin-top: 1rem; display: none; position: relative;
@@ -112,7 +119,6 @@
       <option value="large-v3">large-v3 (~3GB)</option>
     </select>
     <button id="recordBtn" class="btn-record" title="Record from microphone">Record</button>
-    <button id="transcribeBtn" class="btn-primary" disabled>Transcribe</button>
   </div>
 
   <div class="drop-zone" id="dropZone">
@@ -123,6 +129,10 @@
   <div class="recording-viz" id="recordingViz">
     <canvas id="vizCanvas"></canvas>
     <div class="recording-timer" id="recordingTimer">00:00</div>
+  </div>
+
+  <div class="waveform-container" id="waveformContainer">
+    <canvas id="waveformCanvas"></canvas>
   </div>
 
   <div class="spinner" id="spinner"></div>
@@ -153,7 +163,6 @@
 const $ = (s) => document.getElementById(s);
 const dropZone = $("dropZone");
 const fileInput = $("fileInput");
-const transcribeBtn = $("transcribeBtn");
 const recordBtn = $("recordBtn");
 const spinner = $("spinner");
 const statusEl = $("status");
@@ -173,30 +182,98 @@ const progressBar = $("progressBar");
 const retranscribeEl = $("retranscribe");
 const retranscribeModel = $("retranscribeModel");
 const retranscribeBtn = $("retranscribeBtn");
+const waveformContainer = $("waveformContainer");
+const waveformCanvas = $("waveformCanvas");
+const waveformCtx = waveformCanvas.getContext("2d");
 
 let currentFile = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let lastResult = null;
+let isTranscribing = false;
 
-// --- File upload ---
+// --- File upload (auto-transcribe on selection) ---
 
 dropZone.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) setFileAndTranscribe(fileInput.files[0]); });
 
 dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("dragover"); });
 dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("dragover");
-  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files[0]) setFileAndTranscribe(e.dataTransfer.files[0]);
 });
 
 function setFile(file) {
   currentFile = file;
   dropZone.classList.add("has-file");
   dropZone.querySelector("p").innerHTML = `<span class="file-name">${file.name}</span> (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
-  transcribeBtn.disabled = false;
+}
+
+function setFileAndTranscribe(file) {
+  setFile(file);
+  renderWaveform(file);
+  doTranscribe();
+}
+
+// --- Waveform rendering ---
+
+async function renderWaveform(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const actx = new AudioContext();
+    const audioBuffer = await actx.decodeAudioData(arrayBuffer);
+    actx.close();
+
+    const channelData = audioBuffer.getChannelData(0);
+    waveformContainer.classList.add("visible");
+
+    // Force reflow then size canvas
+    void waveformCanvas.offsetWidth;
+    const dpr = window.devicePixelRatio || 1;
+    const w = waveformCanvas.offsetWidth;
+    const h = waveformCanvas.offsetHeight;
+    waveformCanvas.width = w * dpr;
+    waveformCanvas.height = h * dpr;
+    waveformCtx.setTransform(1, 0, 0, 1, 0, 0);
+    waveformCtx.scale(dpr, dpr);
+
+    // Draw waveform — downsample to one min/max pair per pixel column
+    const samplesPerPixel = Math.floor(channelData.length / w);
+    const midY = h / 2;
+
+    waveformCtx.fillStyle = "#1a1a1a";
+    waveformCtx.fillRect(0, 0, w, h);
+
+    // Draw center line
+    waveformCtx.strokeStyle = "#333";
+    waveformCtx.lineWidth = 0.5;
+    waveformCtx.beginPath();
+    waveformCtx.moveTo(0, midY);
+    waveformCtx.lineTo(w, midY);
+    waveformCtx.stroke();
+
+    // Draw waveform
+    waveformCtx.fillStyle = "#5b8def";
+    for (let x = 0; x < w; x++) {
+      const start = x * samplesPerPixel;
+      const end = Math.min(start + samplesPerPixel, channelData.length);
+      let min = 1, max = -1;
+      for (let j = start; j < end; j++) {
+        const val = channelData[j];
+        if (val < min) min = val;
+        if (val > max) max = val;
+      }
+      const top = midY - max * midY;
+      const bottom = midY - min * midY;
+      const barH = Math.max(1, bottom - top);
+      waveformCtx.fillRect(x, top, 1, barH);
+    }
+  } catch {
+    // Can't decode this audio format — hide waveform silently
+    waveformContainer.classList.remove("visible");
+  }
 }
 
 // --- Recording with visualizer + timer ---
@@ -209,7 +286,10 @@ let timerInterval = null;
 function startVisualizer(stream) {
   audioContext = new AudioContext();
   analyser = audioContext.createAnalyser();
-  analyser.fftSize = 64;
+  analyser.fftSize = 256;
+  // Narrow the dynamic range so speech levels produce visible bars
+  analyser.minDecibels = -60;
+  analyser.maxDecibels = -10;
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(analyser);
 
@@ -228,10 +308,17 @@ function startVisualizer(stream) {
     const barCount = 20;
     const gap = 3;
     const barWidth = (w - gap * (barCount - 1)) / barCount;
-    const step = Math.max(1, Math.floor(bufferLength / barCount));
+
+    // Average nearby bins for each bar (more bins now with fftSize=256)
+    const binsPerBar = Math.max(1, Math.floor(bufferLength / barCount));
 
     for (let i = 0; i < barCount; i++) {
-      const val = dataArray[i * step] / 255;
+      let sum = 0;
+      const startBin = i * binsPerBar;
+      for (let b = startBin; b < startBin + binsPerBar && b < bufferLength; b++) {
+        sum += dataArray[b];
+      }
+      const val = (sum / binsPerBar) / 255;
       const barH = Math.max(2, val * h);
       const x = i * (barWidth + gap);
       const y = (h - barH) / 2;
@@ -290,6 +377,9 @@ recordBtn.addEventListener("click", async () => {
       recordBtn.textContent = "Record";
       dropZone.style.display = "";
       recordingViz.classList.remove("visible");
+      // Auto-transcribe after recording
+      renderWaveform(file);
+      doTranscribe();
     };
     mediaRecorder.start();
     recordBtn.classList.add("recording");
@@ -316,11 +406,15 @@ recordBtn.addEventListener("click", async () => {
 
 // --- Transcribe with SSE streaming ---
 
+function countWords(text) {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 async function doTranscribe(modelOverride) {
   const modelToUse = modelOverride || modelSelect.value;
-  if (!currentFile) return;
+  if (!currentFile || isTranscribing) return;
 
-  transcribeBtn.disabled = true;
+  isTranscribing = true;
   recordBtn.disabled = true;
   retranscribeBtn.disabled = true;
   spinner.classList.add("visible");
@@ -368,13 +462,14 @@ async function doTranscribe(modelOverride) {
           progressContainer.classList.remove("visible");
           statusEl.textContent = "Transcribing...";
         } else if (payload.status === "result") {
+          const words = countWords(payload.text);
           lastResult = {
             text: payload.text, segments: payload.segments,
             language: payload.language, duration: payload.duration,
             model: modelToUse,
           };
           transcript.textContent = payload.text;
-          meta.textContent = `${payload.language} \u2022 ${formatDuration(payload.duration)} \u2022 ${payload.segments.length} segments \u2022 ${modelToUse} model`;
+          meta.textContent = `${payload.language} \u2022 ${formatDuration(payload.duration)} \u2022 ${words} words \u2022 ${payload.segments.length} segments \u2022 ${modelToUse} model`;
           resultEl.classList.add("visible");
           updateRetranscribeUI(modelToUse);
         } else if (payload.status === "error") {
@@ -388,13 +483,11 @@ async function doTranscribe(modelOverride) {
     spinner.classList.remove("visible");
     statusEl.textContent = "";
     progressContainer.classList.remove("visible");
-    transcribeBtn.disabled = false;
+    isTranscribing = false;
     recordBtn.disabled = false;
     retranscribeBtn.disabled = false;
   }
 }
-
-transcribeBtn.addEventListener("click", () => doTranscribe());
 
 // --- Re-transcribe ---
 
