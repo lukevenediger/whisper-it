@@ -103,21 +103,24 @@
   }
 
   .mic-selector {
-    display: none; margin-bottom: 1rem; padding: 0.75rem 1rem;
-    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    display: none; margin-bottom: 1rem;
     font-size: 0.85rem;
   }
-  .mic-selector.visible { display: block; }
-  .mic-selector-label { color: #888; margin-bottom: 0.5rem; }
+  .mic-selector.visible { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .mic-selector-label { color: #888; margin-right: 0.25rem; }
   .mic-option {
-    display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.3rem 0; cursor: pointer; color: #ccc;
+    display: inline-block; cursor: pointer;
   }
-  .mic-option:hover { color: #fff; }
-  .mic-option input[type="radio"] {
-    accent-color: #5b8def; width: 16px; height: 16px;
-    cursor: pointer; margin: 0;
+  .mic-option input[type="radio"] { display: none; }
+  .mic-option span {
+    display: inline-block; padding: 0.35rem 0.75rem; border-radius: 6px;
+    border: 1px solid #333; background: #1a1a1a; color: #999;
+    transition: all 0.15s;
   }
+  .mic-option input[type="radio"]:checked + span {
+    border-color: #5b8def; background: rgba(91,141,239,0.1); color: #fff;
+  }
+  .mic-option:hover span { border-color: #555; color: #ccc; }
 
   .error { color: #ef5350; background: rgba(239,83,80,0.1); padding: 0.75rem; border-radius: 6px; margin-top: 1rem; display: none; }
   .error.visible { display: block; }
@@ -139,8 +142,8 @@
   </div>
 
   <div class="mic-selector" id="micSelector">
-    <div class="mic-selector-label">Microphone</div>
-    <div id="micList"></div>
+    <span class="mic-selector-label">Mic:</span>
+    <div id="micList" style="display:contents"></div>
   </div>
 
   <div class="drop-zone" id="dropZone">
@@ -216,7 +219,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let lastResult = null;
 let isTranscribing = false;
-let selectedMicId = null;
+let selectedMicId = localStorage.getItem("whisper-it-mic") || "default";
 
 // --- Microphone enumeration ---
 
@@ -226,23 +229,32 @@ async function enumerateMics() {
     const mics = devices.filter(d => d.kind === "audioinput");
     if (mics.length <= 1) {
       micSelector.classList.remove("visible");
-      selectedMicId = mics[0]?.deviceId || null;
       return;
     }
     micSelector.classList.add("visible");
+    const prevSelected = selectedMicId;
     micList.innerHTML = "";
+
+    // Find the "default" device (deviceId === "default" in Chrome)
+    const hasDefault = mics.some(m => m.deviceId === "default");
+
     mics.forEach((mic, i) => {
-      const label = mic.label || `Microphone ${i + 1}`;
-      const id = `mic-${i}`;
-      const isSelected = selectedMicId ? mic.deviceId === selectedMicId : i === 0;
-      if (isSelected) selectedMicId = mic.deviceId;
+      let label = mic.label || `Microphone ${i + 1}`;
+      // Shorten "Default - Realtek USB2.0 Audio" to just "Default"
+      if (mic.deviceId === "default") label = "Default";
+
+      const isSelected = prevSelected === mic.deviceId
+        || (!prevSelected && mic.deviceId === "default")
+        || (!prevSelected && !hasDefault && i === 0);
 
       const option = document.createElement("label");
       option.className = "mic-option";
-      option.innerHTML = `<input type="radio" name="mic" value="${mic.deviceId}" id="${id}" ${isSelected ? "checked" : ""}> ${label}`;
+      option.innerHTML = `<input type="radio" name="mic" value="${mic.deviceId}" ${isSelected ? "checked" : ""}><span>${label}</span>`;
       option.querySelector("input").addEventListener("change", (e) => {
         selectedMicId = e.target.value;
+        localStorage.setItem("whisper-it-mic", selectedMicId);
       });
+      if (isSelected) selectedMicId = mic.deviceId;
       micList.appendChild(option);
     });
   } catch {
@@ -440,7 +452,8 @@ recordBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const audioConstraints = selectedMicId ? { deviceId: { exact: selectedMicId } } : true;
+    const audioConstraints = selectedMicId && selectedMicId !== "default"
+      ? { deviceId: { exact: selectedMicId } } : true;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     // Re-enumerate after permission grant to get full device labels
     enumerateMics();
