@@ -2,3 +2,5 @@ node_modules/
 dist/
 models/
 *.tmp
+__pycache__/
+.claude/settings.local.json

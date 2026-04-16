@@ -110,7 +110,7 @@ Key changes:
 
 **Step 2: Verify TypeScript still compiles**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && npx tsc --noEmit`
+Run: `npx tsc --noEmit`
 Expected: Clean compile (Python changes don't affect TS)
 
 **Step 3: Commit**
@@ -236,7 +236,7 @@ Key changes:
 
 **Step 2: Verify TypeScript compiles**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && npx tsc --noEmit`
+Run: `npx tsc --noEmit`
 Expected: Clean compile
 
 **Step 3: Commit**
@@ -422,7 +422,7 @@ recordBtn.addEventListener("click", async () => {
 
 **Step 5: Verify it loads without syntax errors**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && npx tsc --noEmit` (only checks TS, but confirms no build breakage)
+Run: `npx tsc --noEmit` (only checks TS, but confirms no build breakage)
 Manual: Open in browser, click Record, confirm visualizer and timer appear.
 
 **Step 6: Commit**
@@ -640,7 +640,7 @@ git commit -m "feat: add share button with OS-level share sheet"
 
 **Step 1: TypeScript compile check**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && npx tsc --noEmit`
+Run: `npx tsc --noEmit`
 Expected: Clean compile
 
 **Step 2: Visual review of index.html**
@@ -649,12 +649,12 @@ Read through the full `src/public/index.html` to verify all pieces integrate cor
 
 **Step 3: Docker build test (if Docker available)**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && docker compose build`
+Run: `docker compose build`
 Expected: Builds successfully
 
 **Step 4: Manual browser test**
 
-Run: `cd /Users/lukevenediger/lukevenediger/whisper-it && docker compose up`
+Run: `docker compose up`
 Test:
 - Record audio: visualizer bars animate, timer counts up, stops properly
 - Upload file: transcribe with default model, see progress streaming

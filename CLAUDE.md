@@ -33,7 +33,7 @@ whisper-it/
 ## Key Design Decisions
 
 - **faster-whisper** over vanilla whisper — faster on CPU, lower memory via CTranslate2 int8 quantization
-- **Child process** approach — Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user tailnet use.
+- **Child process** approach — Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user local use.
 - **Single HTML file** — all CSS/JS inline, no build step for frontend. Keeps it minimal.
 - **Model selection at transcription time** — user picks from tiny/base/small/medium/large-v3 in the UI. Default: small.
 - **Models cached in Docker volume** (`whisper-models:/models`) — first transcription with a new model triggers download, subsequent runs reuse it.
@@ -52,7 +52,7 @@ whisper-it/
 docker compose up --build
 ```
 
-Then open http://localhost:3000 (or your tailnet hostname:3000).
+Then open http://localhost:3000.
 
 First transcription with a given model will be slower — it downloads the model weights. Subsequent runs use the cached model from the volume.
 
@@ -69,6 +69,5 @@ WHISPER_MODELS_DIR=./models npm run dev
 ## Status
 
 - All source files are written and TypeScript compiles clean (`npx tsc --noEmit` passes)
-- Docker build has NOT been tested yet — Docker Hub pulls were timing out on the original machine
-- The app has NOT been end-to-end tested yet
-- Next step: build and run the Docker image, then test with a real audio file
+- Docker build and run tested and working
+- End-to-end tested: file upload, recording, transcription, re-transcribe, share
