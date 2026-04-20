@@ -76,7 +76,8 @@
 
   .retranscribe {
     display: none; align-items: center; gap: 0.5rem;
-    margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #333;
+    margin-top: 1rem; padding: 0.75rem 1rem;
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
     font-size: 0.85rem; color: #888; flex-wrap: wrap;
   }
   .retranscribe.visible { display: flex; }
@@ -124,6 +125,49 @@
 
   .error { color: #ef5350; background: rgba(239,83,80,0.1); padding: 0.75rem; border-radius: 6px; margin-top: 1rem; display: none; }
   .error.visible { display: block; }
+
+  .history { margin-top: 2rem; display: none; }
+  .history.visible { display: block; }
+  .history-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid #333;
+  }
+  .history-title { font-size: 0.95rem; color: #ccc; font-weight: 600; }
+  .history-title span { color: #666; font-weight: 400; font-size: 0.8rem; margin-left: 0.4rem; }
+  .history-clear {
+    padding: 0.3rem 0.6rem; font-size: 0.8rem; border-radius: 4px;
+    background: #252525; border: 1px solid #444; color: #ccc; cursor: pointer;
+  }
+  .history-clear:hover { background: #3a1f1f; border-color: #d32f2f; color: #ef5350; }
+  .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .history-item {
+    background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px;
+    padding: 0.75rem 0.9rem; cursor: pointer; transition: border-color 0.15s;
+  }
+  .history-item:hover { border-color: #444; }
+  .history-item.latest { border-color: #5b8def; background: #17212f; }
+  .history-item.latest:hover { border-color: #6d9bf5; }
+  .history-item.latest .history-item-preview { color: #e0e0e0; font-size: 0.95rem; }
+  .history-item-header {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 0.5rem; margin-bottom: 0.35rem;
+  }
+  .history-item-meta { font-size: 0.75rem; color: #888; }
+  .history-item-actions { display: flex; gap: 0.35rem; }
+  .history-item-actions button {
+    padding: 0.2rem 0.5rem; font-size: 0.75rem; border-radius: 4px;
+    background: #252525; border: 1px solid #3a3a3a; color: #aaa; cursor: pointer;
+  }
+  .history-item-actions button:hover { background: #333; color: #eee; }
+  .history-item-actions .del:hover { background: #3a1f1f; border-color: #d32f2f; color: #ef5350; }
+  .history-item-preview {
+    font-size: 0.85rem; color: #bbb; line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .history-item.expanded .history-item-preview {
+    -webkit-line-clamp: unset; white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
@@ -167,20 +211,18 @@
   </div>
   <div class="error" id="error"></div>
 
-  <div class="result" id="result">
-    <div class="result-header">
-      <span class="result-meta" id="meta"></span>
-      <div class="result-actions">
-        <button class="action-btn" id="copyBtn">Copy</button>
-        <button class="action-btn" id="shareBtn" style="display:none">Share</button>
-      </div>
+  <div class="retranscribe" id="retranscribe">
+    <span>Re-transcribe with:</span>
+    <select id="retranscribeModel"></select>
+    <button id="retranscribeBtn" class="btn-primary">Re-transcribe</button>
+  </div>
+
+  <div class="history" id="history">
+    <div class="history-header">
+      <div class="history-title">Transcriptions <span id="historyCount"></span></div>
+      <button class="history-clear" id="historyClear">Clear all</button>
     </div>
-    <div class="transcript" id="transcript"></div>
-    <div class="retranscribe" id="retranscribe">
-      <span>Re-transcribe with:</span>
-      <select id="retranscribeModel"></select>
-      <button id="retranscribeBtn" class="btn-primary">Re-transcribe</button>
-    </div>
+    <div class="history-list" id="historyList"></div>
   </div>
 </div>
 
@@ -192,11 +234,6 @@ const recordBtn = $("recordBtn");
 const spinner = $("spinner");
 const statusEl = $("status");
 const errorEl = $("error");
-const resultEl = $("result");
-const transcript = $("transcript");
-const meta = $("meta");
-const copyBtn = $("copyBtn");
-const shareBtn = $("shareBtn");
 const modelSelect = $("model");
 const recordingViz = $("recordingViz");
 const vizCanvas = $("vizCanvas");
@@ -517,7 +554,6 @@ async function doTranscribe(modelOverride) {
   spinner.classList.add("visible");
   statusEl.textContent = "Starting...";
   errorEl.classList.remove("visible");
-  resultEl.classList.remove("visible");
   progressContainer.classList.remove("visible");
   progressBar.style.width = "0%";
 
@@ -565,10 +601,17 @@ async function doTranscribe(modelOverride) {
             language: payload.language, duration: payload.duration,
             model: modelToUse,
           };
-          transcript.textContent = payload.text;
-          meta.textContent = `${payload.language} \u2022 ${formatDuration(payload.duration)} \u2022 ${words} words \u2022 ${payload.segments.length} segments \u2022 ${modelToUse} model`;
-          resultEl.classList.add("visible");
           updateRetranscribeUI(modelToUse);
+          saveToHistory({
+            id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + Math.random().toString(36).slice(2),
+            createdAt: Date.now(),
+            text: payload.text,
+            language: payload.language,
+            duration: payload.duration,
+            model: modelToUse,
+            words,
+            segments: payload.segments.length,
+          });
         } else if (payload.status === "error") {
           throw new Error(payload.error);
         }
@@ -603,34 +646,6 @@ function updateRetranscribeUI(usedModel) {
 
 retranscribeBtn.addEventListener("click", () => doTranscribe(retranscribeModel.value));
 
-// --- Copy + Share ---
-
-copyBtn.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(transcript.textContent);
-    copyBtn.textContent = "Copied!";
-  } catch {
-    copyBtn.textContent = "Failed";
-  }
-  setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
-});
-
-if (navigator.share) {
-  shareBtn.style.display = "";
-}
-
-shareBtn.addEventListener("click", async () => {
-  try {
-    await navigator.share({ text: transcript.textContent });
-  } catch (err) {
-    if (err.name !== "AbortError") {
-      navigator.clipboard.writeText(transcript.textContent);
-      shareBtn.textContent = "Copied!";
-      setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
-    }
-  }
-});
-
 // --- Helpers ---
 
 function showError(msg) {
@@ -643,6 +658,159 @@ function formatDuration(s) {
   const sec = Math.round(s % 60);
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
+
+// --- History (localStorage) ---
+
+const HISTORY_KEY = "whisper-it-history";
+const HISTORY_MAX = 100;
+const historyEl = $("history");
+const historyList = $("historyList");
+const historyCount = $("historyCount");
+const historyClear = $("historyClear");
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHistory(items) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(items));
+  } catch (e) {
+    // Quota exceeded — trim aggressively and retry once
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 20))); } catch {}
+  }
+}
+
+function saveToHistory(entry) {
+  const items = loadHistory();
+  items.unshift(entry);
+  if (items.length > HISTORY_MAX) items.length = HISTORY_MAX;
+  writeHistory(items);
+  renderHistory();
+}
+
+function deleteHistoryItem(id) {
+  const items = loadHistory().filter((it) => it.id !== id);
+  writeHistory(items);
+  renderHistory();
+}
+
+function clearHistory() {
+  if (!confirm("Delete all saved transcriptions?")) return;
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function formatTimestamp(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return `Today ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const dateStr = d.toLocaleDateString([], sameYear
+    ? { month: "short", day: "numeric" }
+    : { year: "numeric", month: "short", day: "numeric" });
+  return `${dateStr} ${time}`;
+}
+
+function renderHistory() {
+  const items = loadHistory();
+  if (items.length === 0) {
+    historyEl.classList.remove("visible");
+    historyList.innerHTML = "";
+    historyCount.textContent = "";
+    return;
+  }
+  historyEl.classList.add("visible");
+  historyCount.textContent = items.length > 1 ? `(${items.length})` : "";
+  historyClear.style.display = items.length > 1 ? "" : "none";
+  historyList.innerHTML = "";
+
+  items.forEach((it, idx) => {
+    const row = document.createElement("div");
+    row.className = "history-item" + (idx === 0 ? " latest expanded" : "");
+
+    const header = document.createElement("div");
+    header.className = "history-item-header";
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "history-item-meta";
+    const dur = it.duration != null ? formatDuration(it.duration) : "";
+    const parts = [formatTimestamp(it.createdAt), it.language, dur, `${it.words || 0} words`, `${it.model} model`].filter(Boolean);
+    metaEl.textContent = parts.join(" \u2022 ");
+
+    const actions = document.createElement("div");
+    actions.className = "history-item-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(it.text);
+        copyBtn.textContent = "Copied!";
+      } catch {
+        copyBtn.textContent = "Failed";
+      }
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+    });
+    actions.appendChild(copyBtn);
+
+    if (navigator.share) {
+      const shareBtn = document.createElement("button");
+      shareBtn.textContent = "Share";
+      shareBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.share({ text: it.text });
+        } catch (err) {
+          if (err.name !== "AbortError") {
+            navigator.clipboard.writeText(it.text);
+            shareBtn.textContent = "Copied!";
+            setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
+          }
+        }
+      });
+      actions.appendChild(shareBtn);
+    }
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "del";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteHistoryItem(it.id);
+    });
+    actions.appendChild(delBtn);
+
+    header.appendChild(metaEl);
+    header.appendChild(actions);
+
+    const preview = document.createElement("div");
+    preview.className = "history-item-preview";
+    preview.textContent = it.text;
+
+    row.appendChild(header);
+    row.appendChild(preview);
+    row.addEventListener("click", () => row.classList.toggle("expanded"));
+
+    historyList.appendChild(row);
+  });
+}
+
+historyClear.addEventListener("click", clearHistory);
+renderHistory();
 </script>
 </body>
 </html>
