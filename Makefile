@@ -1,4 +1,4 @@
-.PHONY: build run stop restart logs dev clean typecheck help
+.PHONY: build run stop restart logs dev clean typecheck pull help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -9,6 +9,9 @@ build: ## Build the Docker image
 run: ## Start the service (builds if needed)
 	docker compose up --build -d
 	@echo "\n  Whisper It running at http://localhost:3000\n"
+
+pull: ## Pull and run the published image from Docker Hub
+	docker run --rm -p 3000:3000 -v whisper-models:/models lukevenediger/whisper-it:latest
 
 stop: ## Stop the service
 	docker compose down

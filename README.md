@@ -27,19 +27,43 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Word count** -- Results show language, duration, word count, segment count, and which model was used.
 - **Share** -- Uses the OS-level share sheet (WhatsApp, Telegram, Messages, AirDrop, email, etc.) on supported browsers. Falls back to clipboard copy.
 - **Microphone selector** -- When multiple mics are detected, pick the right one from a row of buttons. Your choice is remembered across sessions.
+- **Transcription history** -- Every transcription is saved to your browser's `localStorage` (never a server, never a database). On return visits you see your previous transcriptions, with the most recent highlighted at the top. Each entry shows the date, language, duration, word count, and model used. Copy, share, or delete individual entries, or clear them all. Nothing leaves your device.
 - **Mobile-friendly** -- Works on your phone's browser. Record a voice memo and get text in seconds.
 
 ## Quick Start
+
+Pull and run the prebuilt image from Docker Hub — no clone, no build. Multi-arch image supports `linux/amd64` and `linux/arm64` (Apple Silicon, Raspberry Pi 4/5, AWS Graviton).
+
+```bash
+docker run -d -p 3000:3000 -v whisper-models:/models \
+  --restart unless-stopped --name whisper-it \
+  lukevenediger/whisper-it:latest
+```
+
+Or with a `docker-compose.yml`:
+
+```yaml
+services:
+  whisper-it:
+    image: lukevenediger/whisper-it:latest
+    ports: ["3000:3000"]
+    volumes: ["whisper-models:/models"]
+    restart: unless-stopped
+volumes:
+  whisper-models:
+```
+
+Open http://localhost:3000 in your browser.
+
+The first transcription with a given model will be slower because it downloads the model weights (~75 MB to ~3 GB depending on model size). Weights are cached in the `whisper-models` volume and reused across restarts.
+
+### Run from source
 
 ```bash
 git clone https://github.com/lukevenediger/whisper-it.git
 cd whisper-it
 docker compose up --build
 ```
-
-Open http://localhost:3000 in your browser.
-
-The first transcription with a given model will be slower because it downloads the model weights (~75 MB to ~3 GB depending on model size). After that, the model is cached in a Docker volume and subsequent transcriptions start immediately.
 
 ## Deployment
 
@@ -93,6 +117,8 @@ Browser  -->  Express (port 3000)  -->  python3 transcribe.py  -->  SSE stream
 
 Everything runs in a single Docker container: Node.js serves the frontend and API, Python handles transcription. Models are cached in a Docker volume so they persist across restarts.
 
+Transcription history lives in your browser's `localStorage` (capped at 100 entries). The server is stateless — no database, no per-user storage. Clear your browser data to wipe history.
+
 ## Whisper Models
 
 | Model | Size | Speed | Accuracy | Best For |
@@ -139,6 +165,22 @@ npm install
 pip install faster-whisper
 WHISPER_MODELS_DIR=./models npm run dev
 ```
+
+## Releasing
+
+Publishing to Docker Hub is automated via `.github/workflows/publish.yml`:
+
+- **Push to `main`** → publishes `lukevenediger/whisper-it:latest` and `:main-<short-sha>`.
+- **Git tag `vX.Y.Z`** → publishes `:X.Y.Z`, `:X.Y`, `:X`, and updates `:latest`.
+
+Cut a release:
+
+```bash
+git tag v1.2.3
+git push --tags
+```
+
+Required GitHub Actions secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (Docker Hub access token with Read/Write/Delete on `lukevenediger/whisper-it`).
 
 ## Project Structure
 
