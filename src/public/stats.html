@@ -119,7 +119,11 @@
     <div class="empty" id="loading">Loading…</div>
   </div>
 
-  <div class="footer" id="footer"></div>
+  <div class="footer">
+    <a href="https://github.com/lukevenediger/whisper-it" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <a href="https://x.com/jumpdest7d" target="_blank" rel="noopener">@jumpdest7d</a>
+  </div>
 </div>
 
 <script>
@@ -285,25 +289,6 @@ async function load() {
 }
 
 load();
-
-async function loadFooter() {
-  try {
-    const res = await fetch("/api/version");
-    if (!res.ok) return;
-    const v = await res.json();
-    const verLabel = v.isReal ? `v·${escapeHtml(v.short)}` : "dev";
-    const verEl = v.isReal
-      ? `<a href="${escapeHtml(v.commitUrl)}" target="_blank" rel="noopener" title="View commit ${escapeHtml(v.commit)} on GitHub"><code>${verLabel}</code></a>`
-      : `<code>${verLabel}</code>`;
-    $("footer").innerHTML =
-      `<span>${verEl}</span>` +
-      `<span class="sep">·</span>` +
-      `<a href="${escapeHtml(v.github)}" target="_blank" rel="noopener">GitHub</a>` +
-      `<span class="sep">·</span>` +
-      `<a href="${escapeHtml(v.x)}" target="_blank" rel="noopener">${escapeHtml(v.xHandle)}</a>`;
-  } catch {}
-}
-loadFooter();
 </script>
 </body>
 </html>
