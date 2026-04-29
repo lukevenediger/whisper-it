@@ -13,8 +13,38 @@
     min-height: 100vh; padding: 2rem 1rem;
   }
   .container { max-width: 640px; width: 100%; }
-  h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+  h1 { font-size: 1.5rem; color: #fff; }
   h1 span { color: #888; font-weight: 400; font-size: 0.9rem; }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1.5rem; gap: 1rem;
+  }
+  .nav-link {
+    color: #5b8def; text-decoration: none; font-size: 0.85rem;
+    padding: 0.4rem 0.75rem; border-radius: 6px; border: 1px solid #2a3f5f;
+  }
+  .nav-link:hover { background: rgba(91,141,239,0.1); }
+  .vanity {
+    font-size: 0.75rem; color: #777; margin: -0.75rem 0 1.25rem;
+    font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  .vanity.visible { opacity: 1; }
+  .vanity a { color: inherit; text-decoration: none; }
+  .vanity a:hover { color: #aaa; }
+  .footer {
+    margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #1f1f1f;
+    font-size: 0.75rem; color: #666; display: flex; gap: 0.75rem;
+    flex-wrap: wrap; justify-content: center; align-items: center;
+  }
+  .footer a {
+    color: #888; text-decoration: underline;
+    text-decoration-color: #3a3a3a; text-underline-offset: 2px;
+  }
+  .footer a:hover { color: #ccc; text-decoration-color: #777; }
+  .footer a code { color: inherit; }
+  .footer .sep { color: #333; }
+  .footer code { font-family: ui-monospace, monospace; color: #888; }
 
   .controls { display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
   select, button {
@@ -152,7 +182,41 @@
     display: flex; justify-content: space-between; align-items: center;
     gap: 0.5rem; margin-bottom: 0.35rem;
   }
+  .history-item-title {
+    font-size: 0.95rem; color: #fff; font-weight: 600;
+    margin-bottom: 0.25rem; word-break: break-word;
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  }
+  .batch-badge {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px;
+    background: rgba(91,141,239,0.15); color: #8db5f5; border: 1px solid #2a3f5f;
+    font-size: 0.7rem; font-weight: 500; cursor: pointer;
+  }
+  .batch-badge:hover { background: rgba(91,141,239,0.25); }
+  .recording-badge {
+    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px;
+    background: rgba(211,47,47,0.15); color: #ef9a9a; border: 1px solid #5a2828;
+    font-size: 0.7rem; font-weight: 500;
+  }
   .history-item-meta { font-size: 0.75rem; color: #888; }
+  .queue-status {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem;
+    color: #ccc; display: none;
+  }
+  .queue-status.visible { display: block; }
+  .queue-status-title { font-weight: 600; color: #fff; margin-bottom: 0.4rem; }
+  .queue-list { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; }
+  .queue-item { color: #888; display: flex; gap: 0.5rem; align-items: center; }
+  .queue-item.active { color: #5b8def; }
+  .queue-item.done { color: #4caf50; }
+  .queue-item.error { color: #ef5350; }
+  .queue-item-status { font-family: monospace; min-width: 1rem; }
+  .queue-item-info {
+    font-size: 0.75rem; color: #888; margin-left: 1.5rem; margin-top: 0.15rem;
+    line-height: 1.4;
+  }
+  .queue-item-info .eta { color: #5b8def; font-variant-numeric: tabular-nums; }
   .history-item-actions { display: flex; gap: 0.35rem; }
   .history-item-actions button {
     padding: 0.2rem 0.5rem; font-size: 0.75rem; border-radius: 4px;
@@ -172,15 +236,62 @@
 </head>
 <body>
 <div class="container">
-  <h1>Whisper It <span>local transcription</span></h1>
+  <div class="topbar">
+    <h1>Whisper It <span>local transcription</span></h1>
+    <a class="nav-link" href="/stats.html">Stats</a>
+  </div>
+  <div class="vanity" id="vanity"></div>
 
   <div class="controls">
-    <select id="model">
+    <select id="model" title="Whisper model">
       <option value="tiny">tiny (~75MB)</option>
       <option value="base">base (~140MB)</option>
       <option value="small" selected>small (~460MB)</option>
       <option value="medium">medium (~1.5GB)</option>
       <option value="large-v3">large-v3 (~3GB)</option>
+    </select>
+    <select id="language" title="Force a language (or auto-detect)">
+      <option value="auto" selected>Auto-detect</option>
+      <option value="en">English (en)</option>
+      <option value="es">Spanish (es)</option>
+      <option value="fr">French (fr)</option>
+      <option value="de">German (de)</option>
+      <option value="it">Italian (it)</option>
+      <option value="pt">Portuguese (pt)</option>
+      <option value="nl">Dutch (nl)</option>
+      <option value="pl">Polish (pl)</option>
+      <option value="ru">Russian (ru)</option>
+      <option value="uk">Ukrainian (uk)</option>
+      <option value="tr">Turkish (tr)</option>
+      <option value="sv">Swedish (sv)</option>
+      <option value="da">Danish (da)</option>
+      <option value="no">Norwegian (no)</option>
+      <option value="fi">Finnish (fi)</option>
+      <option value="cs">Czech (cs)</option>
+      <option value="hu">Hungarian (hu)</option>
+      <option value="ro">Romanian (ro)</option>
+      <option value="el">Greek (el)</option>
+      <option value="ja">Japanese (ja)</option>
+      <option value="ko">Korean (ko)</option>
+      <option value="zh">Chinese (zh)</option>
+      <option value="ar">Arabic (ar)</option>
+      <option value="he">Hebrew (he)</option>
+      <option value="hi">Hindi (hi)</option>
+      <option value="bn">Bengali (bn)</option>
+      <option value="ur">Urdu (ur)</option>
+      <option value="fa">Persian (fa)</option>
+      <option value="th">Thai (th)</option>
+      <option value="vi">Vietnamese (vi)</option>
+      <option value="id">Indonesian (id)</option>
+      <option value="ms">Malay (ms)</option>
+      <option value="af">Afrikaans (af)</option>
+      <option value="sw">Swahili (sw)</option>
+      <option value="zu">Zulu (zu)</option>
+      <option value="xh">Xhosa (xh)</option>
+      <option value="ca">Catalan (ca)</option>
+      <option value="cy">Welsh (cy)</option>
+      <option value="ga">Irish (ga)</option>
+      <option value="is">Icelandic (is)</option>
     </select>
     <button id="recordBtn" class="btn-record" title="Record from microphone">Record</button>
   </div>
@@ -191,8 +302,13 @@
   </div>
 
   <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.flac,.aac">
-    <p>Drop audio file here or click to browse</p>
+    <input type="file" id="fileInput" multiple accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.flac,.aac">
+    <p>Drop one or more audio files here, or click to browse</p>
+  </div>
+
+  <div class="queue-status" id="queueStatus">
+    <div class="queue-status-title" id="queueStatusTitle"></div>
+    <div class="queue-list" id="queueList"></div>
   </div>
 
   <div class="recording-viz" id="recordingViz">
@@ -224,6 +340,8 @@
     </div>
     <div class="history-list" id="historyList"></div>
   </div>
+
+  <div class="footer" id="footer"></div>
 </div>
 
 <script>
@@ -235,6 +353,7 @@ const spinner = $("spinner");
 const statusEl = $("status");
 const errorEl = $("error");
 const modelSelect = $("model");
+const languageSelect = $("language");
 const recordingViz = $("recordingViz");
 const vizCanvas = $("vizCanvas");
 const vizCtx = vizCanvas.getContext("2d");
@@ -250,13 +369,49 @@ const waveformCtx = waveformCanvas.getContext("2d");
 
 const micSelector = $("micSelector");
 const micList = $("micList");
+const queueStatus = $("queueStatus");
+const queueStatusTitle = $("queueStatusTitle");
+const queueListEl = $("queueList");
 
 let currentFile = null;
+let currentFileIsRecording = false;
 let mediaRecorder = null;
 let audioChunks = [];
 let lastResult = null;
 let isTranscribing = false;
 let selectedMicId = localStorage.getItem("whisper-it-mic") || "default";
+
+// Persist model + language across sessions
+const savedModel = localStorage.getItem("whisper-it-model");
+if (savedModel) modelSelect.value = savedModel;
+modelSelect.addEventListener("change", () => localStorage.setItem("whisper-it-model", modelSelect.value));
+
+const savedLang = localStorage.getItem("whisper-it-language");
+if (savedLang) languageSelect.value = savedLang;
+languageSelect.addEventListener("change", () => localStorage.setItem("whisper-it-language", languageSelect.value));
+
+let processingQueue = false;
+let queue = []; // { file, isRecording, batchId, batchIndex, batchSize, status, progress? }
+let currentTranscribingItem = null;
+const ORIG_TITLE = document.title;
+
+// Approximate audio-seconds processed per wall-second by model (CPU int8, cpu_threads=2)
+const MODEL_SPEED = { tiny: 18, base: 10, small: 5, medium: 2.2, "large-v3": 1.2 };
+
+function fmtEta(sec) {
+  if (sec == null || !isFinite(sec) || sec <= 0) return "";
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
+}
+
+function setTabTitle(suffix) {
+  document.title = suffix ? `${suffix} — ${ORIG_TITLE}` : ORIG_TITLE;
+}
 
 // --- Microphone enumeration ---
 
@@ -308,25 +463,177 @@ navigator.mediaDevices.addEventListener("devicechange", enumerateMics);
 // --- File upload (auto-transcribe on selection) ---
 
 dropZone.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => { if (fileInput.files[0]) setFileAndTranscribe(fileInput.files[0]); });
+fileInput.addEventListener("change", () => {
+  if (fileInput.files && fileInput.files.length > 0) enqueueFiles(Array.from(fileInput.files));
+  fileInput.value = "";
+});
 
 dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("dragover"); });
 dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
 dropZone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropZone.classList.remove("dragover");
-  if (e.dataTransfer.files[0]) setFileAndTranscribe(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) enqueueFiles(Array.from(e.dataTransfer.files));
 });
 
-function setFile(file) {
+function setFile(file, isRecording) {
   currentFile = file;
+  currentFileIsRecording = !!isRecording;
   dropZone.classList.add("has-file");
   dropZone.querySelector("p").innerHTML = `<span class="file-name">${file.name}</span> (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
 }
 
-function setFileAndTranscribe(file) {
-  setFile(file);
-  renderWaveform(file).then(() => doTranscribe());
+function enqueueFiles(files) {
+  if (!files.length) return;
+  const isBatch = files.length > 1;
+  const batchId = isBatch ? newId() : null;
+  const startIdx = queue.length;
+  files.forEach((file, i) => {
+    queue.push({
+      file,
+      isRecording: false,
+      batchId,
+      batchIndex: isBatch ? startIdx + i + 1 : null,
+      batchSize: isBatch ? files.length : null,
+      status: "pending",
+    });
+  });
+  renderQueue();
+  if (!processingQueue) processQueue();
+}
+
+function newId() {
+  return (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + Math.random().toString(36).slice(2);
+}
+
+async function processQueue() {
+  if (processingQueue) return;
+  processingQueue = true;
+  while (queue.some(q => q.status === "pending")) {
+    const item = queue.find(q => q.status === "pending");
+    item.status = "active";
+    item.progress = { phase: "starting" };
+    currentTranscribingItem = item;
+    renderQueue();
+    setFile(item.file, item.isRecording);
+    try {
+      await renderWaveform(item.file);
+    } catch {}
+    try {
+      await doTranscribe(undefined, {
+        sourceFilename: item.file.name,
+        isRecording: item.isRecording,
+        batchId: item.batchId,
+        batchIndex: item.batchIndex,
+        batchSize: item.batchSize,
+      });
+      item.status = "done";
+    } catch {
+      item.status = "error";
+    }
+    item.progress = null;
+    currentTranscribingItem = null;
+    setTabTitle("");
+    renderQueue();
+  }
+  processingQueue = false;
+  // Auto-clear queue UI shortly after batch finishes
+  setTimeout(() => {
+    if (!processingQueue) { queue = []; renderQueue(); }
+  }, 4000);
+}
+
+function renderQueue() {
+  if (queue.length === 0) {
+    queueStatus.classList.remove("visible");
+    return;
+  }
+  queueStatus.classList.add("visible");
+  const total = queue.length;
+  const done = queue.filter(q => q.status === "done").length;
+  const errored = queue.filter(q => q.status === "error").length;
+  if (total === 1) {
+    queueStatusTitle.textContent = queue[0].status === "done" ? "Done" : queue[0].status === "error" ? "Error" : "Transcribing";
+  } else {
+    queueStatusTitle.textContent = `Batch ${done + errored}/${total} ${errored ? `(${errored} failed)` : ""}`.trim();
+  }
+  queueListEl.innerHTML = "";
+  queue.forEach(q => {
+    const row = document.createElement("div");
+    row.className = "queue-item " + q.status;
+    const icon = q.status === "done" ? "✓" : q.status === "error" ? "✗" : q.status === "active" ? "▶" : "·";
+    const idxLabel = q.batchSize ? ` [${q.batchIndex}/${q.batchSize}]` : "";
+    const head = `<div><span class="queue-item-status">${icon}</span><span>${escapeHtml(q.file.name)}${idxLabel}</span></div>`;
+    const sub = q.status === "active" && q.progress ? renderProgressLine(q.progress) : "";
+    row.innerHTML = head + sub;
+    queueListEl.appendChild(row);
+  });
+}
+
+function renderProgressLine(p) {
+  if (!p) return "";
+  const parts = [];
+  if (p.phase === "starting") parts.push("Starting…");
+  else if (p.phase === "loading_model") parts.push("Loading model…");
+  else if (p.phase === "downloading") parts.push(`Downloading model · ${p.downloadProgress || 0}%`);
+  else if (p.phase === "chunking") {
+    const mins = p.audioDuration ? Math.round(p.audioDuration / 60) : null;
+    parts.push(`Long audio${mins != null ? ` (${mins} min)` : ""} — splitting…`);
+    if (p.etaSec) parts.push(`<span class="eta">ETA ~${fmtEta(p.etaSec)}</span>`);
+  } else if (p.phase === "chunked") {
+    parts.push(`Split into ${p.totalChunks} × ${Math.round(p.chunkSeconds/60)} min chunks`);
+    if (p.etaSec) parts.push(`<span class="eta">ETA ~${fmtEta(p.etaSec)}</span>`);
+  } else if (p.phase === "transcribing") {
+    if (p.totalChunks) {
+      parts.push(`Chunk ${p.currentChunk}/${p.totalChunks}`);
+      if (p.etaSec) parts.push(`<span class="eta">ETA ~${fmtEta(p.etaSec)}</span>`);
+    } else {
+      parts.push("Transcribing…");
+      if (p.etaSec) parts.push(`<span class="eta">ETA ~${fmtEta(p.etaSec)}</span>`);
+    }
+  }
+  return `<div class="queue-item-info">${parts.join(" · ")}</div>`;
+}
+
+function speedFactor(model) {
+  return MODEL_SPEED[model] || 5;
+}
+
+function estimateTotalSec(audioDuration, model) {
+  if (!audioDuration) return null;
+  return audioDuration / speedFactor(model);
+}
+
+function refineEta(item) {
+  // Refines ETA based on observed wall time of completed chunks
+  const p = item.progress;
+  if (!p || !p.totalChunks || !p.chunkTimings || p.chunkTimings.length === 0) return;
+  const avg = p.chunkTimings.reduce((a, b) => a + b, 0) / p.chunkTimings.length;
+  const remaining = p.totalChunks - (p.currentChunk - 1);
+  // currentChunk is the in-flight one; subtract elapsed of the current chunk if known
+  const nowElapsed = p.currentChunkStart ? (Date.now() - p.currentChunkStart) / 1000 : 0;
+  const etaSec = Math.max(0, remaining * avg - nowElapsed);
+  p.etaSec = etaSec;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+
+function stripExt(name) {
+  const i = name.lastIndexOf(".");
+  return i > 0 ? name.slice(0, i) : name;
+}
+
+function fmtRecordingDate(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+
+function buildTitle(meta, createdAt) {
+  if (meta && meta.isRecording) return `Recording ${fmtRecordingDate(new Date(createdAt))}`;
+  if (meta && meta.sourceFilename) return stripExt(meta.sourceFilename) || meta.sourceFilename;
+  return "Transcription";
 }
 
 // --- Waveform rendering ---
@@ -506,14 +813,23 @@ recordBtn.addEventListener("click", async () => {
       stopVisualizer();
       stopTimer();
       const blob = new Blob(audioChunks, { type: actualMime });
-      const file = new File([blob], `recording.${ext}`, { type: actualMime });
-      setFile(file);
+      const recName = `Recording ${fmtRecordingDate(new Date())}.${ext}`;
+      const file = new File([blob], recName, { type: actualMime });
       recordBtn.classList.remove("recording");
       recordBtn.textContent = "Record";
       dropZone.style.display = "";
       recordingViz.classList.remove("visible");
-      // Auto-transcribe after recording (render waveform first, then transcribe)
-      renderWaveform(file).then(() => doTranscribe());
+      // Push to queue as recording
+      queue.push({
+        file,
+        isRecording: true,
+        batchId: null,
+        batchIndex: null,
+        batchSize: null,
+        status: "pending",
+      });
+      renderQueue();
+      if (!processingQueue) processQueue();
     };
     mediaRecorder.start();
     recordBtn.classList.add("recording");
@@ -544,9 +860,18 @@ function countWords(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-async function doTranscribe(modelOverride) {
+async function doTranscribe(modelOverride, meta) {
   const modelToUse = modelOverride || modelSelect.value;
-  if (!currentFile || isTranscribing) return;
+  if (!currentFile || isTranscribing) return false;
+
+  // For re-transcribe (no meta), inherit from last result so title/batch carries forward
+  const effMeta = meta || (lastResult ? {
+    sourceFilename: lastResult.sourceFilename,
+    isRecording: lastResult.isRecording,
+    batchId: lastResult.batchId,
+    batchIndex: lastResult.batchIndex,
+    batchSize: lastResult.batchSize,
+  } : { sourceFilename: currentFile.name, isRecording: currentFileIsRecording });
 
   isTranscribing = true;
   recordBtn.disabled = true;
@@ -560,7 +885,11 @@ async function doTranscribe(modelOverride) {
   const form = new FormData();
   form.append("audio", currentFile);
   form.append("model", modelToUse);
+  form.append("language", languageSelect.value || "auto");
+  form.append("filename", effMeta.sourceFilename || currentFile.name);
+  form.append("fromRecording", effMeta.isRecording ? "true" : "false");
 
+  let errored = false;
   try {
     const res = await fetch("/api/transcribe", { method: "POST", body: form });
     if (!res.ok) {
@@ -585,32 +914,111 @@ async function doTranscribe(modelOverride) {
         let payload;
         try { payload = JSON.parse(line.slice(6)); } catch { continue; }
 
+        const item = currentTranscribingItem;
         if (payload.status === "loading_model") {
           statusEl.textContent = "Loading model...";
+          if (item) {
+            item.progress = item.progress || {};
+            item.progress.phase = "loading_model";
+            renderQueue();
+          }
         } else if (payload.status === "downloading") {
           statusEl.textContent = `Downloading model... ${payload.progress}%`;
           progressContainer.classList.add("visible");
           progressBar.style.width = `${payload.progress}%`;
+          if (item) {
+            item.progress = item.progress || {};
+            item.progress.phase = "downloading";
+            item.progress.downloadProgress = payload.progress;
+            renderQueue();
+          }
+        } else if (payload.status === "chunking") {
+          const mins = Math.round(payload.duration / 60);
+          statusEl.textContent = `Long audio (${mins} min) — splitting into chunks...`;
+          if (item) {
+            item.progress = {
+              phase: "chunking",
+              audioDuration: payload.duration,
+              etaSec: estimateTotalSec(payload.duration, modelToUse),
+              chunkTimings: [],
+            };
+            setTabTitle(`splitting · ${item.file.name}`);
+            renderQueue();
+          }
+        } else if (payload.status === "chunked") {
+          statusEl.textContent = `Split into ${payload.total} chunks of ${Math.round(payload.chunk_seconds/60)} min`;
+          if (item) {
+            item.progress = item.progress || {};
+            item.progress.phase = "chunked";
+            item.progress.totalChunks = payload.total;
+            item.progress.chunkSeconds = payload.chunk_seconds;
+            item.progress.etaSec = estimateTotalSec(item.progress.audioDuration, modelToUse);
+            item.progress.chunkTimings = item.progress.chunkTimings || [];
+            renderQueue();
+          }
         } else if (payload.status === "transcribing") {
           progressContainer.classList.remove("visible");
-          statusEl.textContent = "Transcribing...";
+          if (item && item.progress) {
+            const p = item.progress;
+            // Mark previous chunk's timing if applicable
+            if (payload.chunk && payload.total && p.currentChunkStart) {
+              const elapsed = (Date.now() - p.currentChunkStart) / 1000;
+              p.chunkTimings = p.chunkTimings || [];
+              p.chunkTimings.push(elapsed);
+            }
+            p.phase = "transcribing";
+            if (payload.chunk && payload.total) {
+              p.currentChunk = payload.chunk;
+              p.totalChunks = payload.total;
+              p.currentChunkStart = Date.now();
+              refineEta(item);
+              setTabTitle(`[${payload.chunk}/${payload.total}] ${item.file.name}`);
+              progressContainer.classList.add("visible");
+              progressBar.style.width = `${((payload.chunk - 1) / payload.total) * 100}%`;
+              statusEl.textContent = `Transcribing chunk ${payload.chunk}/${payload.total}...`;
+            } else {
+              // Single-pass: set ETA from model speed if we know audio duration via waveform — skip otherwise
+              p.currentChunkStart = Date.now();
+              setTabTitle(`transcribing · ${item.file.name}`);
+              statusEl.textContent = "Transcribing...";
+            }
+            renderQueue();
+          } else if (payload.chunk && payload.total) {
+            statusEl.textContent = `Transcribing chunk ${payload.chunk}/${payload.total}...`;
+            progressContainer.classList.add("visible");
+            progressBar.style.width = `${((payload.chunk - 1) / payload.total) * 100}%`;
+          } else {
+            statusEl.textContent = "Transcribing...";
+          }
         } else if (payload.status === "result") {
           const words = countWords(payload.text);
+          const createdAt = Date.now();
           lastResult = {
             text: payload.text, segments: payload.segments,
             language: payload.language, duration: payload.duration,
             model: modelToUse,
+            sourceFilename: effMeta.sourceFilename,
+            isRecording: !!effMeta.isRecording,
+            batchId: effMeta.batchId || null,
+            batchIndex: effMeta.batchIndex || null,
+            batchSize: effMeta.batchSize || null,
           };
           updateRetranscribeUI(modelToUse);
           saveToHistory({
-            id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + Math.random().toString(36).slice(2),
-            createdAt: Date.now(),
+            id: newId(),
+            createdAt,
             text: payload.text,
             language: payload.language,
             duration: payload.duration,
             model: modelToUse,
             words,
             segments: payload.segments.length,
+            title: buildTitle(effMeta, createdAt),
+            sourceFilename: effMeta.sourceFilename || currentFile.name,
+            isRecording: !!effMeta.isRecording,
+            batchId: effMeta.batchId || null,
+            batchIndex: effMeta.batchIndex || null,
+            batchSize: effMeta.batchSize || null,
           });
         } else if (payload.status === "error") {
           throw new Error(payload.error);
@@ -618,6 +1026,7 @@ async function doTranscribe(modelOverride) {
       }
     }
   } catch (err) {
+    errored = true;
     showError(err.message);
   } finally {
     spinner.classList.remove("visible");
@@ -627,6 +1036,8 @@ async function doTranscribe(modelOverride) {
     recordBtn.disabled = false;
     retranscribeBtn.disabled = false;
   }
+  if (errored) throw new Error("transcribe failed");
+  return true;
 }
 
 // --- Re-transcribe ---
@@ -644,7 +1055,7 @@ function updateRetranscribeUI(usedModel) {
   retranscribeEl.classList.add("visible");
 }
 
-retranscribeBtn.addEventListener("click", () => doTranscribe(retranscribeModel.value));
+retranscribeBtn.addEventListener("click", () => doTranscribe(retranscribeModel.value).catch(() => {}));
 
 // --- Helpers ---
 
@@ -737,9 +1148,39 @@ function renderHistory() {
   historyClear.style.display = items.length > 1 ? "" : "none";
   historyList.innerHTML = "";
 
+  // Count batch sizes present in history (for batch-zip button)
+  const batchCounts = {};
+  for (const it of items) {
+    if (it.batchId) batchCounts[it.batchId] = (batchCounts[it.batchId] || 0) + 1;
+  }
+
   items.forEach((it, idx) => {
     const row = document.createElement("div");
     row.className = "history-item" + (idx === 0 ? " latest expanded" : "");
+
+    // Title row with badges
+    const titleEl = document.createElement("div");
+    titleEl.className = "history-item-title";
+    const titleText = document.createElement("span");
+    titleText.textContent = it.title || (it.sourceFilename ? stripExt(it.sourceFilename) : "Transcription");
+    titleEl.appendChild(titleText);
+    if (it.isRecording) {
+      const rb = document.createElement("span");
+      rb.className = "recording-badge";
+      rb.textContent = "Recording";
+      titleEl.appendChild(rb);
+    }
+    if (it.batchId && it.batchSize) {
+      const bb = document.createElement("span");
+      bb.className = "batch-badge";
+      bb.textContent = `Batch \u00b7 ${it.batchIndex} of ${it.batchSize}`;
+      bb.title = "Click to download all transcripts in this batch as a zip";
+      bb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        downloadBatchZip(it.batchId);
+      });
+      titleEl.appendChild(bb);
+    }
 
     const header = document.createElement("div");
     header.className = "history-item-header";
@@ -766,6 +1207,26 @@ function renderHistory() {
       setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
     });
     actions.appendChild(copyBtn);
+
+    const dlBtn = document.createElement("button");
+    dlBtn.textContent = "Download";
+    dlBtn.title = "Save transcript as .txt";
+    dlBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      downloadTranscript(it);
+    });
+    actions.appendChild(dlBtn);
+
+    if (it.batchId && batchCounts[it.batchId] > 1) {
+      const zipBtn = document.createElement("button");
+      zipBtn.textContent = "Zip batch";
+      zipBtn.title = "Download all transcripts in this batch as a zip";
+      zipBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        downloadBatchZip(it.batchId);
+      });
+      actions.appendChild(zipBtn);
+    }
 
     if (navigator.share) {
       const shareBtn = document.createElement("button");
@@ -801,6 +1262,7 @@ function renderHistory() {
     preview.className = "history-item-preview";
     preview.textContent = it.text;
 
+    row.appendChild(titleEl);
     row.appendChild(header);
     row.appendChild(preview);
     row.addEventListener("click", () => row.classList.toggle("expanded"));
@@ -809,8 +1271,124 @@ function renderHistory() {
   });
 }
 
+function transcriptFilename(it) {
+  // Use source filename stem + .txt; fallback to title or id
+  const base = it.sourceFilename ? stripExt(it.sourceFilename) : (it.title || "transcript");
+  return sanitizeFilename(base) + ".txt";
+}
+
+function sanitizeFilename(name) {
+  return String(name).replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim().slice(0, 200) || "transcript";
+}
+
+function downloadTranscript(it) {
+  const blob = new Blob([it.text], { type: "text/plain;charset=utf-8" });
+  triggerDownload(blob, transcriptFilename(it));
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+}
+
+async function downloadBatchZip(batchId) {
+  const items = loadHistory().filter(it => it.batchId === batchId);
+  if (items.length === 0) return;
+  // Order by batchIndex if present, else by createdAt asc
+  items.sort((a, b) => (a.batchIndex || 0) - (b.batchIndex || 0) || a.createdAt - b.createdAt);
+  const files = items.map(it => ({ name: transcriptFilename(it), text: it.text }));
+  const zipName = `transcripts-${new Date().toISOString().slice(0,10)}.zip`;
+  try {
+    const res = await fetch("/api/zip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files, zipName }),
+    });
+    if (!res.ok) throw new Error("Zip request failed");
+    const blob = await res.blob();
+    triggerDownload(blob, zipName);
+  } catch (err) {
+    showError("Failed to download zip: " + err.message);
+  }
+}
+
 historyClear.addEventListener("click", clearHistory);
 renderHistory();
+
+// --- Vanity stats one-liner ---
+
+function fmtVanityDur(s) {
+  if (!s || s < 60) return `${Math.round(s || 0)}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+async function loadVanityStats() {
+  try {
+    const res = await fetch("/api/stats");
+    if (!res.ok) return;
+    const s = await res.json();
+    const el = $("vanity");
+    if (!s || !s.total) {
+      el.innerHTML = `<a href="/stats.html">No transcriptions yet — make the first one</a>`;
+    } else {
+      const wordsStr = (s.totalWords || 0).toLocaleString();
+      el.innerHTML = `<a href="/stats.html">${s.total} transcription${s.total === 1 ? "" : "s"} · ${fmtVanityDur(s.totalDurationSec)} of audio · ${wordsStr} words</a>`;
+    }
+    el.classList.add("visible");
+  } catch {}
+}
+
+loadVanityStats();
+
+async function loadFooter() {
+  try {
+    const res = await fetch("/api/version");
+    if (!res.ok) return;
+    const v = await res.json();
+    const verLabel = v.isReal ? `v·${escapeHtml(v.short)}` : "dev";
+    const verEl = v.isReal
+      ? `<a href="${escapeHtml(v.commitUrl)}" target="_blank" rel="noopener" title="View commit ${escapeHtml(v.commit)} on GitHub"><code>${verLabel}</code></a>`
+      : `<code>${verLabel}</code>`;
+    $("footer").innerHTML =
+      `<span>${verEl}</span>` +
+      `<span class="sep">·</span>` +
+      `<a href="${escapeHtml(v.github)}" target="_blank" rel="noopener">GitHub</a>` +
+      `<span class="sep">·</span>` +
+      `<a href="${escapeHtml(v.x)}" target="_blank" rel="noopener">${escapeHtml(v.xHandle)}</a>`;
+  } catch {}
+}
+loadFooter();
+
+// Refresh after each new transcription completes
+const _origSaveToHistory = saveToHistory;
+saveToHistory = function(entry) {
+  _origSaveToHistory(entry);
+  loadVanityStats();
+};
+
+// Tick ETA + tab title every second while transcribing
+setInterval(() => {
+  const item = currentTranscribingItem;
+  if (!item || !item.progress) return;
+  const p = item.progress;
+  if (p.phase !== "transcribing" && p.phase !== "chunking" && p.phase !== "chunked") return;
+  if (p.totalChunks && p.currentChunk && p.currentChunkStart) {
+    refineEta(item);
+    const etaTxt = p.etaSec ? ` · ~${fmtEta(p.etaSec)}` : "";
+    setTabTitle(`[${p.currentChunk}/${p.totalChunks}]${etaTxt} ${item.file.name}`);
+  } else if (p.audioDuration && p.etaSec) {
+    p.etaSec = Math.max(0, p.etaSec - 1);
+  }
+  renderQueue();
+}, 1000);
 </script>
 </body>
 </html>

@@ -3,15 +3,15 @@
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build the Docker image
-	docker compose build
+build: ## Build the Docker image (injects current commit hash)
+	COMMIT_HASH=$$(git rev-parse HEAD 2>/dev/null || echo dev) docker compose build
 
-run: ## Start the service (builds if needed)
-	docker compose up --build -d
-	@echo "\n  Whisper It running at http://localhost:3000\n"
+run: ## Start the service (builds if needed, injects current commit hash)
+	COMMIT_HASH=$$(git rev-parse HEAD 2>/dev/null || echo dev) docker compose up --build -d
+	@echo "\n  Whisper It running at http://localhost:4000\n"
 
 pull: ## Pull and run the published image from Docker Hub
-	docker run --rm -p 3000:3000 -v whisper-models:/models lukevenediger/whisper-it:latest
+	docker run --rm -p 4000:4000 -v whisper-models:/models lukevenediger/whisper-it:latest
 
 stop: ## Stop the service
 	docker compose down

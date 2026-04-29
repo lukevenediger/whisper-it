@@ -1,11 +1,20 @@
 services:
   whisper-it:
-    build: .
+    build:
+      context: .
+      args:
+        COMMIT_HASH: ${COMMIT_HASH:-dev}
     ports:
-      - "3000:3000"
+      - "4000:4000"
     volumes:
       - whisper-models:/models
+      - whisper-data:/data
+    # Memory budget — base/small + chunking fit easily; bump if running medium/large-v3 on long audio.
+    # If your Docker Desktop VM has < 8 GB allocated overall, raise it in Settings → Resources.
+    mem_limit: 8g
+    mem_reservation: 2g
     restart: unless-stopped
 
 volumes:
   whisper-models:
+  whisper-data:
