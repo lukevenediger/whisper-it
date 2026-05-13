@@ -10,6 +10,15 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir faster-whisper
 
+# CPU-only torch + pyannote for optional on-device diarization (Phase 1).
+# CPU wheel keeps the image ~1GB smaller than the default CUDA wheel.
+# Disable diarization at runtime via WHISPER_DIARIZE=0; pyannote weights are fetched on first use.
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      --extra-index-url https://pypi.org/simple \
+      torch torchaudio \
+ && pip install --no-cache-dir "pyannote.audio==3.1.*"
+
 WORKDIR /app
 
 # Install Node dependencies
@@ -20,6 +29,7 @@ RUN npm install
 COPY tsconfig.json ./
 COPY src/ ./src/
 COPY transcribe.py ./
+COPY diarize.py ./
 
 # Build TypeScript
 RUN npm run build
@@ -38,6 +48,8 @@ ENV WHISPER_NUM_WORKERS=1
 ENV OMP_NUM_THREADS=2
 ENV MKL_NUM_THREADS=2
 ENV OPENBLAS_NUM_THREADS=2
+# Diarization off by default. Set to 1 + provide HF_TOKEN to enable on-device speaker attribution.
+ENV WHISPER_DIARIZE=0
 RUN mkdir -p /data
 EXPOSE 4000
 

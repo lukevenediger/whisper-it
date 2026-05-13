@@ -32,6 +32,21 @@ Then open http://localhost:4000. Stats dashboard at http://localhost:4000/stats.
 
 First transcription with a given model will be slower -- it downloads the model weights. Subsequent runs use the cached model from the Docker volume.
 
+### Optional: enable speaker attribution
+
+Copy the env template and fill in only what you need. Basic transcription works without any of this.
+
+```bash
+cp .env.example .env
+$EDITOR .env       # fill in HF_TOKEN and/or OPENROUTER_API_KEY
+make run
+```
+
+- **On-device diarization** -- set `WHISPER_DIARIZE=1` and `HF_TOKEN=hf_...`. `HF_TOKEN` is a **HuggingFace** token (free account); accept the gated-model terms at https://huggingface.co/pyannote/speaker-diarization-3.1 first.
+- **Cloud attribution with named speakers** -- set `OPENROUTER_API_KEY=sk-or-...`. This is an **OpenRouter** key (paid per token, https://openrouter.ai/keys). Users without server-side key can paste their own key in the attribute screen (BYOK).
+
+`HF_TOKEN` and `OPENROUTER_API_KEY` are for two unrelated services. Setting one does not affect the other.
+
 ## Features
 
 - **Record or upload** -- Record from your mic (with live visualizer) or upload/drop one or more audio files
@@ -47,6 +62,9 @@ First transcription with a given model will be slower -- it downloads the model 
 - **Waveform display** -- Audacity-style waveform of your audio
 - **Save transcript .txt** -- Per-history-item Download button, named after source file
 - **Save batch .zip** -- Per-batch zip download (one .txt per source audio, named after source filename)
+- **Speaker attribution (opt-in)** -- Two paths, both off by default and never inline:
+  - *On-device*: enable `WHISPER_DIARIZE=1` + `HF_TOKEN`, then tick the "Attribute speakers" toggle before transcribing. Runs pyannote.audio 3.1 locally; labels segments `SPEAKER_00`/`SPEAKER_01`/…
+  - *Cloud (named)*: open any history item → **Attribute** button → `/attribute.html`. Supply speaker names + roles; calls OpenRouter (server key or BYOK) to get named labels. Result is saved as a new sibling history entry — the original is never overwritten.
 - **Share** -- Uses OS-level share sheet (WhatsApp, Telegram, Messages, etc.) on supported browsers
 - **Mic selector** -- Pick which microphone to use when multiple are available
 - **Persistent stats** -- `/stats.html` shows total counts, audio duration, words, by-model/by-language breakdowns, last-30-days chart, longest item, recent activity. Persisted across restarts in the `whisper-data` volume.
@@ -71,19 +89,21 @@ Transcription progress is streamed to the browser via Server-Sent Events (SSE). 
 
 ```
 whisper-it/
-├── docker-compose.yml       # Single service, port 4000, model + data volumes, mem_limit 4g
-├── Dockerfile               # node:20-slim + Python 3 + faster-whisper, thread caps + commit ARG
+├── docker-compose.yml       # Single service, port 4000, model + data volumes, mem_limit 8g, env passthrough
+├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + (CPU) torch + pyannote, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
 ├── package.json             # Express, multer, archiver, TypeScript
 ├── tsconfig.json
 ├── transcribe.py            # Python: loads faster-whisper, transcribes, JSON out; cpu_threads/num_workers/beam_size from env
+├── diarize.py               # Python: pyannote.audio 3.1 speaker diarization; stdin segments, stdout labeled segments
 └── src/
-    ├── server.ts            # Express: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version, static
+    ├── server.ts            # Express: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute, static
     ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
     └── public/
-        ├── index.html       # Main UI: record / multi-upload queue / history / footer
-        └── stats.html       # Stats dashboard
+        ├── index.html       # Main UI: record / multi-upload queue / history / footer / diarize toggle
+        ├── stats.html       # Stats dashboard
+        └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK)
 ```
 
 ## Key Design Decisions
@@ -104,10 +124,18 @@ whisper-it/
 
 ### POST /api/transcribe
 - **Content-Type:** multipart/form-data
-- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
-- **Response:** SSE stream with events: `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `result` (with text, segments, language, duration), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
+- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional), `diarize` (string "true", optional — only honored when `WHISPER_DIARIZE=1` server-side)
+- **Response:** SSE stream with events: `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `diarize_starting` / `loading_diarizer` / `diarizing` (when `diarize=true`), `result` (with text, segments, language, duration; also `speakers` array + per-segment `speaker` field when diarization ran), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
 - **Max file size:** 100MB
-- Audio file is deleted from disk immediately after the request completes.
+- Audio file is deleted from disk immediately after the request (and any diarization pass) completes.
+
+### POST /api/attribute
+Cloud post-process for speaker attribution. Calls OpenRouter on the server's behalf.
+- **Content-Type:** application/json
+- **Body:** `{ segments: [{start, end, text}], speakers: [{name, description?}], model?, byokKey? }`
+- **Auth:** uses `byokKey` if provided, else `process.env.OPENROUTER_API_KEY`. Returns an error if neither is set.
+- **Response:** SSE stream with events: `attributing` (with `model`, `segmentCount`, `speakerCount`), `result` (with merged segments + `speakers` array + optional `warning`), `error`.
+- **Privacy:** request body is never logged. The key is read into memory once per request and forwarded to OpenRouter only.
 
 ### GET /api/stats
 Aggregate stats JSON used by `/stats.html`. See `src/stats.ts` for shape.
@@ -116,7 +144,7 @@ Aggregate stats JSON used by `/stats.html`. See `src/stats.ts` for shape.
 Body `{files: [{name, text}], zipName}` → returns `application/zip` attachment.
 
 ### GET /api/version
-Returns `{commit, short, isReal, commitUrl, github, x, xHandle}` for the footer.
+Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasDiarize, hasServerKey}`. `hasDiarize` reflects `WHISPER_DIARIZE`; `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set. Client uses these to gate UI controls.
 
 ## Tunable env
 
@@ -132,6 +160,9 @@ Returns `{commit, short, isReal, commitUrl, github, x, xHandle}` for the footer.
 | `WHISPER_CHUNK_THRESHOLD_SEC` | `1200` | audio > N sec triggers ffmpeg chunking |
 | `WHISPER_CHUNK_SECONDS` | `600` | chunk length when chunking kicks in |
 | `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2` | BLAS thread caps |
+| `WHISPER_DIARIZE` | `0` | Set `1` to enable on-device speaker attribution (pyannote.audio 3.1). Requires `HF_TOKEN`. |
+| `HF_TOKEN` | _(unset)_ | **HuggingFace** token (NOT OpenRouter -- different service). Used to fetch pyannote weights on first run; the model is gated, so accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1 first. |
+| `OPENROUTER_API_KEY` | _(unset)_ | **OpenRouter** API key (NOT HuggingFace -- different service). Server-side key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged. |
 
 ## Development (without Docker)
 

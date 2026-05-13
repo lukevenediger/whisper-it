@@ -61,6 +61,7 @@
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 
   .drop-zone {
+    display: block;
     border: 2px dashed #333; border-radius: 8px; padding: 2rem;
     text-align: center; color: #666; margin-bottom: 1rem;
     transition: border-color 0.2s, background 0.2s; cursor: pointer;
@@ -69,6 +70,29 @@
   .drop-zone.has-file { border-color: #4caf50; color: #aaa; }
   .drop-zone input { display: none; }
   .file-name { color: #5b8def; font-weight: 500; word-break: break-all; }
+
+  .diarize-toggle {
+    display: none; align-items: center; gap: 0.4rem;
+    padding: 0.4rem 0.7rem; border: 1px solid #333; border-radius: 6px;
+    background: #1a1a1a; color: #aaa; font-size: 0.85rem; cursor: pointer;
+    user-select: none;
+  }
+  .diarize-toggle.available { display: inline-flex; }
+  .diarize-toggle input { margin: 0; cursor: pointer; }
+  .diarize-toggle.on { border-color: #5b8def; color: #5b8def; background: rgba(91,141,239,0.08); }
+
+  .speaker-line { margin: 0 0 0.6em 0; }
+  .speaker-tag {
+    display: inline-block; padding: 0 0.4em; margin-right: 0.4em;
+    border-radius: 3px; font-weight: 600; font-size: 0.85em;
+    background: #2a2a2a; color: #ddd;
+  }
+  .speaker-tag.s0 { background: #2a4a7a; color: #cde0ff; }
+  .speaker-tag.s1 { background: #7a2a4a; color: #ffcde0; }
+  .speaker-tag.s2 { background: #2a7a4a; color: #cdffd6; }
+  .speaker-tag.s3 { background: #7a6a2a; color: #fff0c0; }
+  .speaker-tag.s4 { background: #5a2a7a; color: #e6cdff; }
+  .speaker-tag.s5 { background: #2a7a7a; color: #c0f0f0; }
 
   .recording-viz {
     display: none; flex-direction: column; align-items: center; gap: 0.75rem;
@@ -293,6 +317,9 @@
       <option value="ga">Irish (ga)</option>
       <option value="is">Icelandic (is)</option>
     </select>
+    <label class="diarize-toggle" id="diarizeToggle" title="Identify and label speakers on-device (slower)">
+      <input type="checkbox" id="diarizeCheckbox"><span>Attribute speakers</span>
+    </label>
     <button id="recordBtn" class="btn-record" title="Record from microphone">Record</button>
   </div>
 
@@ -301,10 +328,10 @@
     <div id="micList" style="display:contents"></div>
   </div>
 
-  <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" multiple accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm,.flac,.aac">
+  <label class="drop-zone" id="dropZone" for="fileInput">
+    <input type="file" id="fileInput" multiple accept="audio/*">
     <p>Drop one or more audio files here, or click to browse</p>
-  </div>
+  </label>
 
   <div class="queue-status" id="queueStatus">
     <div class="queue-status-title" id="queueStatusTitle"></div>
@@ -358,6 +385,8 @@ const statusEl = $("status");
 const errorEl = $("error");
 const modelSelect = $("model");
 const languageSelect = $("language");
+const diarizeToggle = $("diarizeToggle");
+const diarizeCheckbox = $("diarizeCheckbox");
 const recordingViz = $("recordingViz");
 const vizCanvas = $("vizCanvas");
 const vizCtx = vizCanvas.getContext("2d");
@@ -393,6 +422,23 @@ modelSelect.addEventListener("change", () => localStorage.setItem("whisper-it-mo
 const savedLang = localStorage.getItem("whisper-it-language");
 if (savedLang) languageSelect.value = savedLang;
 languageSelect.addEventListener("change", () => localStorage.setItem("whisper-it-language", languageSelect.value));
+
+// Diarization toggle — visibility depends on server capability (fetched below)
+diarizeCheckbox.checked = localStorage.getItem("whisper-it-diarize") === "1";
+function syncDiarizeChrome() {
+  diarizeToggle.classList.toggle("on", diarizeCheckbox.checked);
+}
+syncDiarizeChrome();
+diarizeCheckbox.addEventListener("change", () => {
+  localStorage.setItem("whisper-it-diarize", diarizeCheckbox.checked ? "1" : "0");
+  syncDiarizeChrome();
+});
+
+let serverCaps = { hasDiarize: false, hasServerKey: false };
+fetch("/api/version").then(r => r.json()).then(v => {
+  serverCaps = { hasDiarize: !!v.hasDiarize, hasServerKey: !!v.hasServerKey };
+  if (serverCaps.hasDiarize) diarizeToggle.classList.add("available");
+}).catch(() => {});
 
 let processingQueue = false;
 let queue = []; // { file, isRecording, batchId, batchIndex, batchSize, status, progress? }
@@ -460,24 +506,45 @@ async function enumerateMics() {
 }
 
 // Enumerate on load (labels may be empty until permission is granted)
-enumerateMics();
-// Re-enumerate when devices change (e.g. plugging in a headset)
-navigator.mediaDevices.addEventListener("devicechange", enumerateMics);
+if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+  enumerateMics();
+  // Re-enumerate when devices change (e.g. plugging in a headset)
+  if (typeof navigator.mediaDevices.addEventListener === "function") {
+    navigator.mediaDevices.addEventListener("devicechange", enumerateMics);
+  }
+}
 
 // --- File upload (auto-transcribe on selection) ---
 
-dropZone.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {
   if (fileInput.files && fileInput.files.length > 0) enqueueFiles(Array.from(fileInput.files));
   fileInput.value = "";
 });
 
-dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("dragover"); });
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
-dropZone.addEventListener("drop", (e) => {
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
   e.preventDefault();
+  dragDepth++;
+  dropZone.classList.add("dragover");
+});
+window.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", (e) => {
+  if (e.target !== document && e.relatedTarget) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dropZone.classList.remove("dragover");
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
   dropZone.classList.remove("dragover");
-  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) enqueueFiles(Array.from(e.dataTransfer.files));
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    enqueueFiles(Array.from(e.dataTransfer.files));
+  }
 });
 
 function setFile(file, isRecording) {
@@ -892,6 +959,9 @@ async function doTranscribe(modelOverride, meta) {
   form.append("language", languageSelect.value || "auto");
   form.append("filename", effMeta.sourceFilename || currentFile.name);
   form.append("fromRecording", effMeta.isRecording ? "true" : "false");
+  if (serverCaps.hasDiarize && diarizeCheckbox.checked) {
+    form.append("diarize", "true");
+  }
 
   let errored = false;
   try {
@@ -994,11 +1064,17 @@ async function doTranscribe(modelOverride, meta) {
           } else {
             statusEl.textContent = "Transcribing...";
           }
+        } else if (payload.status === "diarize_starting" || payload.status === "loading_diarizer") {
+          statusEl.textContent = "Identifying speakers...";
+          setTabTitle(`speakers · ${(item && item.file && item.file.name) || ""}`);
+        } else if (payload.status === "diarizing") {
+          statusEl.textContent = "Diarizing audio...";
         } else if (payload.status === "result") {
           const words = countWords(payload.text);
           const createdAt = Date.now();
           lastResult = {
             text: payload.text, segments: payload.segments,
+            speakers: payload.speakers || null,
             language: payload.language, duration: payload.duration,
             model: modelToUse,
             sourceFilename: effMeta.sourceFilename,
@@ -1016,7 +1092,8 @@ async function doTranscribe(modelOverride, meta) {
             duration: payload.duration,
             model: modelToUse,
             words,
-            segments: payload.segments.length,
+            segments: payload.segments,
+            speakers: payload.speakers || null,
             title: buildTitle(effMeta, createdAt),
             sourceFilename: effMeta.sourceFilename || currentFile.name,
             isRecording: !!effMeta.isRecording,
@@ -1203,7 +1280,7 @@ function renderHistory() {
     copyBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       try {
-        await navigator.clipboard.writeText(it.text);
+        await navigator.clipboard.writeText(displayText(it));
         copyBtn.textContent = "Copied!";
       } catch {
         copyBtn.textContent = "Failed";
@@ -1232,16 +1309,28 @@ function renderHistory() {
       actions.appendChild(zipBtn);
     }
 
+    if (Array.isArray(it.segments) && it.segments.length > 0) {
+      const attrBtn = document.createElement("button");
+      attrBtn.textContent = hasSpeakers(it) ? "Re-attribute" : "Attribute";
+      attrBtn.title = "Open the speaker-attribution screen for this transcript";
+      attrBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.location.href = `/attribute.html?id=${encodeURIComponent(it.id)}`;
+      });
+      actions.appendChild(attrBtn);
+    }
+
     if (navigator.share) {
       const shareBtn = document.createElement("button");
       shareBtn.textContent = "Share";
       shareBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
+        const shareText = displayText(it);
         try {
-          await navigator.share({ text: it.text });
+          await navigator.share({ text: shareText });
         } catch (err) {
           if (err.name !== "AbortError") {
-            navigator.clipboard.writeText(it.text);
+            navigator.clipboard.writeText(shareText);
             shareBtn.textContent = "Copied!";
             setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
           }
@@ -1264,7 +1353,11 @@ function renderHistory() {
 
     const preview = document.createElement("div");
     preview.className = "history-item-preview";
-    preview.textContent = it.text;
+    if (hasSpeakers(it)) {
+      renderSpeakerPreview(preview, it.segments);
+    } else {
+      preview.textContent = it.text;
+    }
 
     row.appendChild(titleEl);
     row.appendChild(header);
@@ -1273,6 +1366,70 @@ function renderHistory() {
 
     historyList.appendChild(row);
   });
+}
+
+function hasSpeakers(it) {
+  return Array.isArray(it.segments) && it.segments.some(s => s && s.speaker);
+}
+
+function speakerIndex(label, knownSpeakers) {
+  // Color slot 0..5 based on first-seen order of speakers in this transcript
+  const idx = knownSpeakers.indexOf(label);
+  return idx >= 0 ? idx % 6 : 0;
+}
+
+function formatTranscriptWithSpeakers(segments) {
+  // Group consecutive same-speaker segments into one block
+  if (!Array.isArray(segments) || segments.length === 0) return "";
+  const blocks = [];
+  let current = null;
+  for (const seg of segments) {
+    const sp = seg.speaker || "SPEAKER_??";
+    if (!current || current.speaker !== sp) {
+      if (current) blocks.push(current);
+      current = { speaker: sp, text: (seg.text || "").trim() };
+    } else {
+      current.text += " " + (seg.text || "").trim();
+    }
+  }
+  if (current) blocks.push(current);
+  return blocks.map(b => `${b.speaker}: ${b.text.trim()}`).join("\n\n");
+}
+
+function renderSpeakerPreview(targetEl, segments) {
+  targetEl.innerHTML = "";
+  if (!Array.isArray(segments) || segments.length === 0) return;
+  const knownSpeakers = [];
+  for (const s of segments) {
+    if (s.speaker && !knownSpeakers.includes(s.speaker)) knownSpeakers.push(s.speaker);
+  }
+  // Group consecutive same-speaker
+  let current = null;
+  const flush = () => {
+    if (!current) return;
+    const p = document.createElement("p");
+    p.className = "speaker-line";
+    const tag = document.createElement("span");
+    tag.className = `speaker-tag s${speakerIndex(current.speaker, knownSpeakers)}`;
+    tag.textContent = current.speaker;
+    p.appendChild(tag);
+    p.appendChild(document.createTextNode(current.text.trim()));
+    targetEl.appendChild(p);
+  };
+  for (const seg of segments) {
+    const sp = seg.speaker || "SPEAKER_??";
+    if (!current || current.speaker !== sp) {
+      flush();
+      current = { speaker: sp, text: (seg.text || "").trim() };
+    } else {
+      current.text += " " + (seg.text || "").trim();
+    }
+  }
+  flush();
+}
+
+function displayText(it) {
+  return hasSpeakers(it) ? formatTranscriptWithSpeakers(it.segments) : it.text;
 }
 
 function transcriptFilename(it) {
@@ -1286,7 +1443,7 @@ function sanitizeFilename(name) {
 }
 
 function downloadTranscript(it) {
-  const blob = new Blob([it.text], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([displayText(it)], { type: "text/plain;charset=utf-8" });
   triggerDownload(blob, transcriptFilename(it));
 }
 
@@ -1305,7 +1462,7 @@ async function downloadBatchZip(batchId) {
   if (items.length === 0) return;
   // Order by batchIndex if present, else by createdAt asc
   items.sort((a, b) => (a.batchIndex || 0) - (b.batchIndex || 0) || a.createdAt - b.createdAt);
-  const files = items.map(it => ({ name: transcriptFilename(it), text: it.text }));
+  const files = items.map(it => ({ name: transcriptFilename(it), text: displayText(it) }));
   const zipName = `transcripts-${new Date().toISOString().slice(0,10)}.zip`;
   try {
     const res = await fetch("/api/zip", {
