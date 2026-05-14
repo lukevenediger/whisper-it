@@ -1,0 +1,70 @@
+name: Nightly diarization E2E
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  e2e-diarize:
+    name: Pyannote diarization E2E
+    # Run on cron, manual, or when a PR gets the "test-diarize" label
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'test-diarize')
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      WHISPER_DIARIZE: "1"
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install espeak-ng + ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate audio fixtures
+        run: bash tests/fixtures/generate-audio.sh
+
+      - name: Start whisper-it container with diarization enabled
+        run: |
+          docker compose up --build -d
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:4000/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:4000/api/version
+          test "$(curl -sf http://localhost:4000/api/version | jq -r .hasDiarize)" = "true"
+
+      - name: Run diarization E2E
+        env:
+          E2E_BASE_URL: http://localhost:4000
+          E2E_NO_SERVER: "1"
+        run: npx playwright test --project=chromium tests/e2e/diarize.spec.ts tests/e2e/attribute.spec.ts
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail=400
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-diarize
+          path: playwright-report/
+          retention-days: 14
