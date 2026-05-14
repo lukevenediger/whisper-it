@@ -94,17 +94,40 @@ whisper-it/
 ├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + (CPU) torch + pyannote, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
-├── package.json             # Express, multer, archiver, TypeScript
+├── .env.example             # Documented template for HF_TOKEN + OPENROUTER_API_KEY + WHISPER_DIARIZE
+├── package.json             # Express, multer, archiver, TypeScript + test/lint deps
 ├── tsconfig.json
 ├── transcribe.py            # Python: loads faster-whisper, transcribes, JSON out; cpu_threads/num_workers/beam_size from env
 ├── diarize.py               # Python: pyannote.audio 3.1 speaker diarization; stdin segments, stdout labeled segments
-└── src/
-    ├── server.ts            # Express: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute, static
-    ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
-    └── public/
-        ├── index.html       # Main UI: record / multi-upload queue / history / footer / diarize toggle
-        ├── stats.html       # Stats dashboard
-        └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK)
+├── src/
+│   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen
+│   ├── app.ts               # Configured Express app: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute, static. Exported for in-process supertest.
+│   ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
+│   ├── lib/
+│   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / fallback)
+│   │   ├── sanitize.ts      # sanitizeZipName
+│   │   └── words.ts         # countWords
+│   └── public/
+│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / diarize toggle
+│       ├── stats.html       # Stats dashboard
+│       └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK)
+├── tests/
+│   ├── unit/                # vitest TS + pytest python (diarize.merge cases)
+│   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container
+│   ├── e2e/                 # Playwright specs (basic, retranscribe, batch, language, history, recording, attribute, mobile, diarize)
+│   └── fixtures/
+│       ├── generate-audio.sh    # espeak-ng + ffmpeg → short/medium/multispeaker/silence-padded/spanish/long.wav
+│       ├── transcripts/         # Loose-match expected substrings
+│       └── audio/               # Generated, gitignored
+├── vitest.config.ts          # node env, forks pool, dotenv setup, v8 coverage
+├── playwright.config.ts      # chromium / webkit / mobile-iphone / chromium-fake-audio projects; webServer skipped via E2E_NO_SERVER
+├── eslint.config.mjs         # flat config, @typescript-eslint, prettier compat
+├── .prettierrc + .prettierignore
+├── ruff.toml + pytest.ini + requirements-dev.txt
+└── .github/workflows/
+    ├── ci.yml                # lint / typecheck / unit / integration / e2e / docker-build (parallel, cancel-in-progress)
+    ├── nightly.yml           # Pyannote diarization e2e on cron + workflow_dispatch + "test-diarize" PR label
+    └── publish.yml           # Multi-arch Docker Hub push on main + semver tags
 ```
 
 ## Key Design Decisions
