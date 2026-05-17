@@ -1408,12 +1408,7 @@ function renderHistory() {
     copyBtn.textContent = "Copy";
     copyBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(displayText(it));
-        copyBtn.textContent = "Copied!";
-      } catch {
-        copyBtn.textContent = "Failed";
-      }
+      copyBtn.textContent = (await copyToClipboard(displayText(it))) ? "Copied!" : "Failed";
       setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
     });
     actions.appendChild(copyBtn);
@@ -1459,8 +1454,8 @@ function renderHistory() {
           await navigator.share({ text: shareText });
         } catch (err) {
           if (err.name !== "AbortError") {
-            navigator.clipboard.writeText(shareText);
-            shareBtn.textContent = "Copied!";
+            const ok = await copyToClipboard(shareText);
+            shareBtn.textContent = ok ? "Copied!" : "Failed";
             setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
           }
         }
@@ -1574,6 +1569,35 @@ function sanitizeFilename(name) {
 function downloadTranscript(it) {
   const blob = new Blob([displayText(it)], { type: "text/plain;charset=utf-8" });
   triggerDownload(blob, transcriptFilename(it));
+}
+
+async function copyToClipboard(text) {
+  // Modern API: works on HTTPS and localhost. Fails (undefined or NotAllowedError) on
+  // plain-HTTP LAN/VPN access, which is exactly how this app is often used.
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+  // Fallback: invisible textarea + document.execCommand. Deprecated but the only
+  // thing that still works on plain-HTTP origins.
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 function triggerDownload(blob, filename) {
