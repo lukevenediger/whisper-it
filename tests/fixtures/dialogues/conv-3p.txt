@@ -1,0 +1,13 @@
+A|Hi everyone, thanks for joining. Bob, you wanted to walk us through the architecture?
+B|Yes Alice. I have three diagrams. The first one shows the data ingestion layer.
+C|Before you start Bob, could you remind me which database we ended up choosing?
+B|We picked Postgres for the primary store, Carol. Redis only for caching.
+C|Right, thanks. Go ahead.
+B|So ingestion runs through a queue. Each event is durable for thirty days.
+A|Carol, does that retention window meet the compliance requirements you flagged?
+C|Thirty days is the minimum. I would prefer sixty, but thirty is acceptable.
+A|Okay, let us note that as a follow-up. Bob, what about the processing layer?
+B|There are two stages. Validation first, then enrichment with external data.
+C|Who owns the enrichment pipeline?
+B|My team for now. We can hand it off once it stabilizes.
+A|Great. Let us move to the API design next.

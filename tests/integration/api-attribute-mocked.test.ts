@@ -51,14 +51,18 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     expect(events[0]).toMatchObject({ status: "error" });
   });
 
-  it("forwards a clean JSON assignment", async () => {
+  it("forwards a clean JSON assignment with ambiguous + notes", async () => {
     server.use(
       http.post(OPENROUTER, () =>
         HttpResponse.json({
           choices: [
             {
               message: {
-                content: JSON.stringify({ assignments: { "0": "Alice", "1": "Bob" } }),
+                content: JSON.stringify({
+                  assignments: { "0": "Alice", "1": "Bob" },
+                  ambiguous: [1],
+                  notes: "Bob's line was short.",
+                }),
               },
             },
           ],
@@ -68,12 +72,53 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     const events = await callAttribute({
       segments: baseSegments,
       speakers: [{ name: "Alice" }, { name: "Bob" }],
+      speakerCount: 2,
     });
     const result = events.find((e) => e.status === "result");
     expect(result).toBeDefined();
     expect(result.segments.map((s: any) => s.speaker)).toEqual(["Alice", "Bob"]);
     expect(result.speakers).toEqual(["Alice", "Bob"]);
+    expect(result.ambiguous).toEqual([1]);
+    expect(result.notes).toContain("Bob");
     expect(result.warning).toBeNull();
+  });
+
+  it("includes speakerCount + extraContext in the upstream prompt", async () => {
+    let seenUser = "";
+    server.use(
+      http.post(OPENROUTER, async ({ request }) => {
+        const body = (await request.json()) as any;
+        seenUser = body?.messages?.find((m: any) => m.role === "user")?.content || "";
+        return HttpResponse.json({
+          choices: [
+            { message: { content: JSON.stringify({ assignments: { "0": "A", "1": "B" } }) } },
+          ],
+        });
+      }),
+    );
+    await callAttribute({
+      segments: baseSegments,
+      speakers: [],
+      speakerCount: 3,
+      extraContext: "Alice runs product. Bob runs eng.",
+    });
+    expect(seenUser).toContain("Expected speaker count: 3");
+    expect(seenUser).toContain("Alice runs product");
+  });
+
+  it("attributing event reports the configured speaker count", async () => {
+    server.use(
+      http.post(OPENROUTER, () =>
+        HttpResponse.json({
+          choices: [{ message: { content: '{"assignments":{"0":"A","1":"A"}}' } }],
+        }),
+      ),
+    );
+    const events = await callAttribute({ segments: baseSegments, speakers: [], speakerCount: 2 });
+    const attributing = events.find((e) => e.status === "attributing");
+    expect(attributing.speakerCount).toBe(2);
+    const events2 = await callAttribute({ segments: baseSegments, speakers: [] });
+    expect(events2.find((e) => e.status === "attributing").speakerCount).toBe("auto");
   });
 
   it("handles markdown-fenced JSON", async () => {
@@ -96,7 +141,7 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     expect(result.segments.map((s: any) => s.speaker)).toEqual(["X", "Y"]);
   });
 
-  it("falls back to SPEAKER_NN on prose output", async () => {
+  it("falls back to SPEAKER_NN on prose output + flags all ambiguous", async () => {
     server.use(
       http.post(OPENROUTER, () =>
         HttpResponse.json({
@@ -108,6 +153,7 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     const result = events.find((e) => e.status === "result");
     expect(result.warning).toMatch(/unparseable/i);
     expect(result.segments.map((s: any) => s.speaker)).toEqual(["SPEAKER_00", "SPEAKER_01"]);
+    expect(result.ambiguous).toEqual([0, 1]);
   });
 
   it("propagates upstream 401", async () => {

@@ -42,7 +42,7 @@ jobs:
           python-version: "3.12"
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: python3 -m py_compile transcribe.py diarize.py
+      - run: python3 -m py_compile transcribe.py
 
   unit:
     name: Unit tests
@@ -53,13 +53,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - run: npm ci
       - run: npm run test:unit
-      - run: pip install -r requirements-dev.txt
-      - run: pytest tests/unit/python -v
 
   integration:
     name: Integration tests

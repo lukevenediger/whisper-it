@@ -15,9 +15,9 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:coverage": "vitest run --coverage",
-    "test:py": "pytest",
     "test:e2e": "playwright test",
-    "fixtures": "bash tests/fixtures/generate-audio.sh"
+    "fixtures": "bash tests/fixtures/generate-audio.sh",
+    "fixtures:conversations": "bash tests/fixtures/generate-conversations.sh"
   },
   "dependencies": {
     "archiver": "^7.0.1",

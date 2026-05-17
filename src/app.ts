@@ -148,95 +148,6 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, "public")));
 
-type DiarizeArgs = {
-  audioPath: string;
-  transcribeResult: any;
-  res: any;
-  onSuccess: (mergedResult: any) => void;
-  onFailure: () => void;
-  setCurrentChild: (child: ChildProcess | null) => void;
-  isAborted: () => boolean;
-};
-
-function runDiarize(args: DiarizeArgs): void {
-  const { audioPath, transcribeResult, res, onSuccess, onFailure, setCurrentChild, isAborted } =
-    args;
-
-  res.write(`data: ${JSON.stringify({ status: "diarize_starting" })}\n\n`);
-
-  const scriptPath = path.join(__dirname, "..", "diarize.py");
-  const proc: ChildProcess = spawn("python3", [scriptPath, "--file", audioPath]);
-  setCurrentChild(proc);
-
-  let stdout = "";
-  let stderrBuf = "";
-  let stderrRaw = "";
-
-  proc.stdout!.on("data", (d: Buffer) => {
-    stdout += d.toString();
-  });
-  proc.stderr!.on("data", (d: Buffer) => {
-    const chunk = d.toString();
-    stderrRaw += chunk;
-    stderrBuf += chunk;
-    const lines = stderrBuf.split("\n");
-    stderrBuf = lines.pop() || "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (!isAborted()) res.write(`data: ${JSON.stringify(parsed)}\n\n`);
-      } catch {
-        console.error("[diarize stderr]", trimmed);
-      }
-    }
-  });
-
-  proc.on("close", (code, signal) => {
-    setCurrentChild(null);
-    if (isAborted()) return;
-    if (code !== 0) {
-      console.error(`[diarize] failed (exit=${code} signal=${signal || "none"}):\n${stderrRaw}`);
-      onFailure();
-      return;
-    }
-    try {
-      const diarResult = JSON.parse(stdout);
-      const merged = transcribeResult.segments.map((seg: any, i: number) => {
-        const d = diarResult.segments?.[i];
-        return d && d.speaker ? { ...seg, speaker: d.speaker } : seg;
-      });
-      onSuccess({
-        ...transcribeResult,
-        segments: merged,
-        speakers: diarResult.speakers || [],
-      });
-    } catch (e) {
-      console.error("[diarize] parse failed:", e, "stdout:", stdout.slice(0, 500));
-      onFailure();
-    }
-  });
-
-  proc.on("error", (err) => {
-    setCurrentChild(null);
-    console.error("[diarize] spawn failed:", err);
-    if (!isAborted()) onFailure();
-  });
-
-  try {
-    proc.stdin!.write(JSON.stringify({ segments: transcribeResult.segments }));
-    proc.stdin!.end();
-  } catch (e) {
-    console.error("[diarize] stdin write failed:", e);
-    try {
-      proc.kill();
-    } catch {}
-    setCurrentChild(null);
-    if (!isAborted()) onFailure();
-  }
-}
-
 app.post("/api/transcribe", upload.single("audio"), (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "No audio file provided" });
@@ -258,10 +169,6 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
       ? req.body.filename
       : req.file.originalname || "audio";
   const audioBytes = req.file.size || 0;
-
-  const diarizeRequested =
-    (req.body.diarize === "true" || req.body.diarize === true) &&
-    process.env.WHISPER_DIARIZE === "1";
 
   const tmpPath = req.file.path;
 
@@ -357,20 +264,6 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
         cleanup();
       };
 
-      if (diarizeRequested && Array.isArray(result.segments) && result.segments.length > 0) {
-        runDiarize({
-          audioPath: tmpPath,
-          transcribeResult: result,
-          res,
-          onSuccess: finalize,
-          onFailure: () => finalize(result),
-          setCurrentChild: (c) => {
-            currentChild = c;
-          },
-          isAborted: () => clientAborted,
-        });
-        return;
-      }
       finalize(result);
       return;
     } else {
@@ -430,6 +323,8 @@ app.post("/api/attribute", async (req, res) => {
   const body = req.body as {
     segments?: AttrSegment[];
     speakers?: AttrSpeaker[];
+    speakerCount?: number | "auto";
+    extraContext?: string;
     model?: string;
     byokKey?: string;
   };
@@ -474,14 +369,27 @@ app.post("/api/attribute", async (req, res) => {
       "No OpenRouter API key available. Provide one via the form or set OPENROUTER_API_KEY on the server.",
     );
 
+  const speakerCount =
+    typeof body.speakerCount === "number" && body.speakerCount > 0
+      ? Math.floor(body.speakerCount)
+      : "auto";
+  const extraContext =
+    typeof body.extraContext === "string" ? body.extraContext.slice(0, 4000) : "";
+
   send({
     status: "attributing",
     model,
-    speakerCount: speakers.length,
+    speakerCount,
+    rosterSize: speakers.length,
     segmentCount: segments.length,
   });
 
-  const { system, user } = buildAttributionPrompt(segments, speakers);
+  const { system, user } = buildAttributionPrompt({
+    segments,
+    speakers,
+    speakerCount,
+    extraContext,
+  });
 
   let openrouterRes: Response;
   try {
@@ -526,16 +434,28 @@ app.post("/api/attribute", async (req, res) => {
     return fail("OpenRouter response missing message content");
   }
 
-  const { merged, speakers: resolvedSpeakers, warning } = applyAssignments(segments, content);
+  const {
+    merged,
+    speakers: resolvedSpeakers,
+    ambiguous,
+    notes,
+    warning,
+  } = applyAssignments(segments, content);
   send({
     status: "result",
     segments: merged,
     speakers: resolvedSpeakers,
+    ambiguous,
+    notes,
     model,
     warning: warning || null,
   });
   res.end();
 });
+
+const DEBUG_FIXTURES_ENABLED = process.env.WHISPER_DEBUG_FIXTURES === "1";
+const FIXTURES_DIR = process.env.WHISPER_FIXTURES_DIR || "/fixtures";
+const FIXTURE_EXT_RE = /\.(mp3|wav|m4a|ogg|oga|flac|aac|webm)$/i;
 
 app.get("/api/version", (_req, res) => {
   res.json({
@@ -546,9 +466,47 @@ app.get("/api/version", (_req, res) => {
     github: GITHUB_URL,
     x: X_URL,
     xHandle: X_HANDLE,
-    hasDiarize: process.env.WHISPER_DIARIZE === "1",
     hasServerKey: !!(process.env.OPENROUTER_API_KEY || "").trim(),
+    hasDebugFixtures: DEBUG_FIXTURES_ENABLED && fs.existsSync(FIXTURES_DIR),
   });
+});
+
+app.get("/api/debug/fixtures", (_req, res) => {
+  if (!DEBUG_FIXTURES_ENABLED) {
+    res.status(404).json({ error: "Debug fixtures disabled. Set WHISPER_DEBUG_FIXTURES=1." });
+    return;
+  }
+  try {
+    const names = fs
+      .readdirSync(FIXTURES_DIR)
+      .filter((f) => FIXTURE_EXT_RE.test(f))
+      .sort();
+    const files = names.map((name) => {
+      const stat = fs.statSync(path.join(FIXTURES_DIR, name));
+      return { name, sizeBytes: stat.size };
+    });
+    res.json({ dir: FIXTURES_DIR, files });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+app.get("/api/debug/fixture-file/:name", (req, res) => {
+  if (!DEBUG_FIXTURES_ENABLED) {
+    res.status(404).end();
+    return;
+  }
+  const name = req.params.name;
+  if (!name || name !== path.basename(name) || name.startsWith(".") || !FIXTURE_EXT_RE.test(name)) {
+    res.status(400).json({ error: "invalid fixture name" });
+    return;
+  }
+  const full = path.join(FIXTURES_DIR, name);
+  if (!fs.existsSync(full)) {
+    res.status(404).json({ error: "fixture not found" });
+    return;
+  }
+  res.sendFile(full);
 });
 
 type ZipFile = { name: string; text: string };

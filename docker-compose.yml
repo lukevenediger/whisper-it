@@ -9,16 +9,14 @@ services:
     volumes:
       - whisper-models:/models
       - whisper-data:/data
+      # Debug-only: expose test audio fixtures so the UI can pick one with a button.
+      # Mount is harmless when WHISPER_DEBUG_FIXTURES=0 (default).
+      - ./tests/fixtures/audio:/fixtures:ro
     environment:
-      # Speaker attribution (diarization). Off by default. To enable:
-      #   1. Accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1
-      #   2. Generate an HF token, then either export it locally or put both lines in a .env file:
-      #        WHISPER_DIARIZE=1
-      #        HF_TOKEN=hf_xxx
-      WHISPER_DIARIZE: ${WHISPER_DIARIZE:-0}
-      HF_TOKEN: ${HF_TOKEN:-}
-      # OpenRouter key for Phase 2 (cloud/BYOK attribution). Optional — users can also bring their own key in-browser.
+      # OpenRouter key for cloud speaker attribution. Optional — users can also bring their own key in-browser.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Debug fixtures dropdown — set to 1 to expose tests/fixtures/audio/* in the UI.
+      WHISPER_DEBUG_FIXTURES: ${WHISPER_DEBUG_FIXTURES:-0}
     # Memory budget — base/small + chunking fit easily; bump if running medium/large-v3 on long audio.
     # If your Docker Desktop VM has < 8 GB allocated overall, raise it in Settings → Resources.
     mem_limit: 8g

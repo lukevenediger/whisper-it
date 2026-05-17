@@ -1,0 +1,12 @@
+A|Hi Bob, how was your weekend?
+B|Pretty good Alice, I went hiking with my brother. How about yours?
+A|Mostly relaxed. I caught up on some reading and tried a new recipe.
+B|What did you make?
+A|A mushroom risotto. It took longer than I expected, but it turned out well.
+B|Sounds great. I should probably cook more instead of ordering takeout.
+A|It is surprisingly fun once you start. Anyway, are we still on for the project review tomorrow?
+B|Yes, ten in the morning. I will send the agenda this afternoon.
+A|Perfect. Did you get a chance to look at the design doc?
+B|I read through it twice. There are a few questions I want to raise about the data model.
+A|Good. We can walk through those before the broader meeting.
+B|Sounds like a plan. See you tomorrow Alice.

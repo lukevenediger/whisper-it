@@ -35,6 +35,9 @@ test("attribute screen labels a seeded transcript via real OpenRouter", async ({
   await rows.nth(1).locator("input").first().fill("Bob");
   await rows.nth(1).locator("input").nth(1).fill("engineering lead");
 
+  // Tell the model how many speakers to expect
+  await page.locator("#speakerCountInput").fill("2");
+
   // Use server key (already on since hasServerKey is true)
   await page.locator("#keyServer").check();
 

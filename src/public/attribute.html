@@ -90,6 +90,20 @@
     margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid #2a3f5f;
     border-radius: 6px; background: rgba(91,141,239,0.04);
   }
+  .result-notes {
+    margin-bottom: 0.75rem; padding: 0.5rem 0.7rem;
+    background: rgba(91,141,239,0.08); border-left: 3px solid #5b8def;
+    font-size: 0.85rem; color: #cdd9f0; white-space: pre-wrap;
+  }
+  .ambiguous-summary {
+    margin-bottom: 0.6rem; padding: 0.4rem 0.7rem;
+    background: rgba(230,185,85,0.08); border-left: 3px solid #e6b955;
+    font-size: 0.8rem; color: #e6b955;
+  }
+  .speaker-line.ambiguous {
+    background: rgba(230,185,85,0.06); border-left: 3px solid #e6b955;
+    padding: 0.2em 0.4em; margin-left: -0.4em;
+  }
   .speaker-line { margin: 0 0 0.6em 0; font-size: 0.9rem; line-height: 1.5; }
   .speaker-tag {
     display: inline-block; padding: 0 0.4em; margin-right: 0.4em;
@@ -139,6 +153,13 @@
       <div id="speakerRows" style="margin-top:0.6rem"></div>
       <button id="addSpeakerBtn" class="btn-ghost" style="margin-top:0.3rem">+ Add speaker</button>
 
+      <label class="field-label" for="speakerCountInput">How many speakers? <span style="color:#666">(leave blank for auto-detect)</span></label>
+      <input type="number" id="speakerCountInput" placeholder="auto" min="1" max="20" style="max-width:8rem">
+
+      <label class="field-label" for="extraContextInput">Extra context <span style="color:#666">(optional)</span></label>
+      <textarea id="extraContextInput" rows="3" placeholder="E.g. Alice usually drives the agenda. Bob is quieter and tends to ask clarifying questions." style="width:100%; padding:0.5rem 0.75rem; border-radius:6px; border:1px solid #333; background:#1a1a1a; color:#e0e0e0; font-size:0.9rem; font-family:inherit; resize:vertical"></textarea>
+      <div class="hint">Used to disambiguate uncertain turns. Persisted across refinements.</div>
+
       <label class="field-label" for="modelInput">OpenRouter model</label>
       <input type="text" id="modelInput" placeholder="anthropic/claude-sonnet-4-6">
       <div class="hint">Any OpenRouter model id. Defaults to anthropic/claude-sonnet-4-6.</div>
@@ -158,8 +179,11 @@
 
       <div id="resultBlock" class="result-block" style="display:none">
         <h2 style="margin-bottom:0.6rem">Result</h2>
+        <div id="resultNotes" class="result-notes" style="display:none"></div>
+        <div id="ambiguousSummary" class="ambiguous-summary" style="display:none"></div>
         <div id="resultPreview"></div>
         <div class="actions">
+          <button id="refineBtn">Refine (add context &amp; re-run)</button>
           <button id="saveBtn" class="btn-primary">Save as new history entry</button>
           <button id="discardBtn">Discard</button>
         </div>
@@ -180,6 +204,7 @@ const HISTORY_KEY = "whisper-it-history";
 const BYOK_KEY = "whisper-it-openrouter-key";
 const MODEL_KEY = "whisper-it-openrouter-model";
 const SPEAKERS_KEY = "whisper-it-speakers-recent";
+const SPEAKER_COUNT_KEY = "whisper-it-speaker-count-recent";
 
 const params = new URLSearchParams(window.location.search);
 const itemId = params.get("id");
@@ -271,12 +296,27 @@ function bootstrap(it) {
   }).catch(() => {});
   syncKeySource();
 
+  // Speaker count persistence
+  const savedCount = localStorage.getItem(SPEAKER_COUNT_KEY);
+  if (savedCount) $("speakerCountInput").value = savedCount;
+  $("speakerCountInput").addEventListener("change", () => {
+    const v = $("speakerCountInput").value.trim();
+    if (v) localStorage.setItem(SPEAKER_COUNT_KEY, v);
+    else localStorage.removeItem(SPEAKER_COUNT_KEY);
+  });
+
   $("submitBtn").addEventListener("click", () => doAttribute(it));
   $("discardBtn").addEventListener("click", () => {
     $("resultBlock").style.display = "none";
     pendingResult = null;
   });
   $("saveBtn").addEventListener("click", () => saveAttributed(it));
+  $("refineBtn").addEventListener("click", () => {
+    // Hide previous result, scroll to the speaker form so user can edit context.
+    $("resultBlock").style.display = "none";
+    $("extraContextInput").focus();
+    setStatus("Edit speakers / context, then click \"Attribute speakers\" to re-run.");
+  });
 }
 
 function addSpeakerRow(s) {
@@ -316,6 +356,9 @@ async function doAttribute(it) {
   const model = $("modelInput").value.trim();
   const useByok = $("keyByok").checked;
   const byokKey = useByok ? $("byokInput").value.trim() : "";
+  const countRaw = $("speakerCountInput").value.trim();
+  const speakerCount = countRaw ? parseInt(countRaw, 10) : undefined;
+  const extraContext = $("extraContextInput").value.trim();
 
   if (useByok && !byokKey) {
     setStatus("Paste your OpenRouter key (or switch to Server key).", "error");
@@ -333,6 +376,8 @@ async function doAttribute(it) {
       body: JSON.stringify({
         segments: it.segments.map(s => ({ start: s.start, end: s.end, text: s.text })),
         speakers,
+        speakerCount: Number.isInteger(speakerCount) && speakerCount > 0 ? speakerCount : undefined,
+        extraContext: extraContext || undefined,
         model: model || undefined,
         byokKey: byokKey || undefined,
       }),
@@ -353,9 +398,16 @@ async function doAttribute(it) {
         let p;
         try { p = JSON.parse(line.slice(6)); } catch { continue; }
         if (p.status === "attributing") {
-          setStatus(`Calling ${p.model} on ${p.segmentCount} segments...`);
+          const countTxt = p.speakerCount === "auto" ? "auto-detect" : `${p.speakerCount} speakers`;
+          setStatus(`Calling ${p.model} on ${p.segmentCount} segments (${countTxt})...`);
         } else if (p.status === "result") {
-          pendingResult = { segments: p.segments, speakers: p.speakers, model: p.model };
+          pendingResult = {
+            segments: p.segments,
+            speakers: p.speakers,
+            ambiguous: Array.isArray(p.ambiguous) ? p.ambiguous : [],
+            notes: typeof p.notes === "string" ? p.notes : "",
+            model: p.model,
+          };
           if (p.warning) setStatus(p.warning, "warn");
           else setStatus("Done.");
           renderResult(pendingResult);
@@ -378,6 +430,26 @@ function setStatus(msg, kind) {
 }
 
 function renderResult(result) {
+  // Notes
+  const notesEl = $("resultNotes");
+  if (result.notes && result.notes.trim()) {
+    notesEl.textContent = result.notes.trim();
+    notesEl.style.display = "";
+  } else {
+    notesEl.style.display = "none";
+  }
+
+  // Ambiguous summary
+  const ambSet = new Set(result.ambiguous || []);
+  const summaryEl = $("ambiguousSummary");
+  if (ambSet.size > 0) {
+    summaryEl.textContent = `Model flagged ${ambSet.size} segment${ambSet.size === 1 ? "" : "s"} as uncertain — see highlighted lines below. Click "Refine" to add context and re-run.`;
+    summaryEl.style.display = "";
+  } else {
+    summaryEl.style.display = "none";
+  }
+
+  // Segments → grouped speaker lines, with ambiguity marker if any seg in a block was flagged.
   const wrap = $("resultPreview");
   wrap.innerHTML = "";
   const known = [];
@@ -388,24 +460,26 @@ function renderResult(result) {
   const flush = () => {
     if (!cur) return;
     const p = document.createElement("p");
-    p.className = "speaker-line";
+    p.className = "speaker-line" + (cur.ambiguous ? " ambiguous" : "");
     const tag = document.createElement("span");
     const idx = known.indexOf(cur.speaker);
     tag.className = `speaker-tag s${(idx >= 0 ? idx : 0) % 6}`;
-    tag.textContent = cur.speaker;
+    tag.textContent = cur.speaker + (cur.ambiguous ? " ?" : "");
     p.appendChild(tag);
     p.appendChild(document.createTextNode(cur.text.trim()));
     wrap.appendChild(p);
   };
-  for (const seg of result.segments) {
+  result.segments.forEach((seg, i) => {
     const sp = seg.speaker || "SPEAKER_??";
+    const isAmb = ambSet.has(i);
     if (!cur || cur.speaker !== sp) {
       flush();
-      cur = { speaker: sp, text: (seg.text || "").trim() };
+      cur = { speaker: sp, text: (seg.text || "").trim(), ambiguous: isAmb };
     } else {
       cur.text += " " + (seg.text || "").trim();
+      if (isAmb) cur.ambiguous = true;
     }
-  }
+  });
   flush();
   $("resultBlock").style.display = "";
 }
@@ -421,6 +495,8 @@ function saveAttributed(original) {
     createdAt: Date.now(),
     segments: pendingResult.segments,
     speakers: pendingResult.speakers,
+    ambiguous: pendingResult.ambiguous || [],
+    attributionNotes: pendingResult.notes || "",
     title: `${baseTitle} (attributed)`,
     attributedFrom: original.id,
     attributedModel: pendingResult.model,

@@ -71,15 +71,16 @@
   .drop-zone input { display: none; }
   .file-name { color: #5b8def; font-weight: 500; word-break: break-all; }
 
-  .diarize-toggle {
-    display: none; align-items: center; gap: 0.4rem;
-    padding: 0.4rem 0.7rem; border: 1px solid #333; border-radius: 6px;
-    background: #1a1a1a; color: #aaa; font-size: 0.85rem; cursor: pointer;
-    user-select: none;
+  .debug-panel {
+    display: none; gap: 0.5rem; margin-bottom: 1rem; align-items: center;
+    padding: 0.6rem 0.8rem; border: 1px dashed #5b3f8d; border-radius: 6px;
+    background: rgba(91,63,141,0.05); font-size: 0.85rem; color: #b59cd9;
   }
-  .diarize-toggle.available { display: inline-flex; }
-  .diarize-toggle input { margin: 0; cursor: pointer; }
-  .diarize-toggle.on { border-color: #5b8def; color: #5b8def; background: rgba(91,141,239,0.08); }
+  .debug-panel.visible { display: flex; flex-wrap: wrap; }
+  .debug-panel .label { color: #9077b5; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.7rem; }
+  .debug-panel select { padding: 0.3rem 0.5rem; min-width: 14rem; }
+  .debug-panel button { padding: 0.3rem 0.8rem; background: #5b3f8d; border-color: #5b3f8d; color: #fff; }
+  .debug-panel button:hover { background: #6e4ea8; }
 
   .speaker-line { margin: 0 0 0.6em 0; }
   .speaker-tag {
@@ -317,15 +318,18 @@
       <option value="ga">Irish (ga)</option>
       <option value="is">Icelandic (is)</option>
     </select>
-    <label class="diarize-toggle" id="diarizeToggle" title="Identify and label speakers on-device (slower)">
-      <input type="checkbox" id="diarizeCheckbox"><span>Attribute speakers</span>
-    </label>
     <button id="recordBtn" class="btn-record" title="Record from microphone">Record</button>
   </div>
 
   <div class="mic-selector" id="micSelector">
     <span class="mic-selector-label">Mic:</span>
     <div id="micList" style="display:contents"></div>
+  </div>
+
+  <div class="debug-panel" id="debugPanel">
+    <span class="label">Debug</span>
+    <select id="debugFixture" title="Server-side test fixture"></select>
+    <button id="debugRunBtn" type="button" title="Run the selected fixture through the normal transcribe pipeline">Run fixture</button>
   </div>
 
   <label class="drop-zone" id="dropZone" for="fileInput">
@@ -385,8 +389,6 @@ const statusEl = $("status");
 const errorEl = $("error");
 const modelSelect = $("model");
 const languageSelect = $("language");
-const diarizeToggle = $("diarizeToggle");
-const diarizeCheckbox = $("diarizeCheckbox");
 const recordingViz = $("recordingViz");
 const vizCanvas = $("vizCanvas");
 const vizCtx = vizCanvas.getContext("2d");
@@ -423,22 +425,56 @@ const savedLang = localStorage.getItem("whisper-it-language");
 if (savedLang) languageSelect.value = savedLang;
 languageSelect.addEventListener("change", () => localStorage.setItem("whisper-it-language", languageSelect.value));
 
-// Diarization toggle — visibility depends on server capability (fetched below)
-diarizeCheckbox.checked = localStorage.getItem("whisper-it-diarize") === "1";
-function syncDiarizeChrome() {
-  diarizeToggle.classList.toggle("on", diarizeCheckbox.checked);
-}
-syncDiarizeChrome();
-diarizeCheckbox.addEventListener("change", () => {
-  localStorage.setItem("whisper-it-diarize", diarizeCheckbox.checked ? "1" : "0");
-  syncDiarizeChrome();
-});
-
-let serverCaps = { hasDiarize: false, hasServerKey: false };
+let serverCaps = { hasServerKey: false, hasDebugFixtures: false };
 fetch("/api/version").then(r => r.json()).then(v => {
-  serverCaps = { hasDiarize: !!v.hasDiarize, hasServerKey: !!v.hasServerKey };
-  if (serverCaps.hasDiarize) diarizeToggle.classList.add("available");
+  serverCaps = {
+    hasServerKey: !!v.hasServerKey,
+    hasDebugFixtures: !!v.hasDebugFixtures,
+  };
+  if (serverCaps.hasDebugFixtures) setupDebugPanel();
 }).catch(() => {});
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+async function setupDebugPanel() {
+  const panel = $("debugPanel");
+  const select = $("debugFixture");
+  const runBtn = $("debugRunBtn");
+  try {
+    const res = await fetch("/api/debug/fixtures");
+    if (!res.ok) return;
+    const { files } = await res.json();
+    if (!files || files.length === 0) return;
+    select.innerHTML = "";
+    for (const f of files) {
+      const opt = document.createElement("option");
+      opt.value = f.name;
+      opt.textContent = `${f.name}  (${fmtSize(f.sizeBytes)})`;
+      select.appendChild(opt);
+    }
+    panel.classList.add("visible");
+    runBtn.addEventListener("click", async () => {
+      const name = select.value;
+      if (!name) return;
+      runBtn.disabled = true;
+      runBtn.textContent = "Loading...";
+      try {
+        const blob = await (await fetch(`/api/debug/fixture-file/${encodeURIComponent(name)}`)).blob();
+        const file = new File([blob], name, { type: blob.type || "audio/mpeg" });
+        enqueueFiles([file]);
+      } catch (e) {
+        showError("Failed to load fixture: " + (e && e.message ? e.message : e));
+      } finally {
+        runBtn.disabled = false;
+        runBtn.textContent = "Run fixture";
+      }
+    });
+  } catch {}
+}
 
 let processingQueue = false;
 let queue = []; // { file, isRecording, batchId, batchIndex, batchSize, status, progress? }
@@ -959,9 +995,6 @@ async function doTranscribe(modelOverride, meta) {
   form.append("language", languageSelect.value || "auto");
   form.append("filename", effMeta.sourceFilename || currentFile.name);
   form.append("fromRecording", effMeta.isRecording ? "true" : "false");
-  if (serverCaps.hasDiarize && diarizeCheckbox.checked) {
-    form.append("diarize", "true");
-  }
 
   let errored = false;
   try {
@@ -1064,11 +1097,6 @@ async function doTranscribe(modelOverride, meta) {
           } else {
             statusEl.textContent = "Transcribing...";
           }
-        } else if (payload.status === "diarize_starting" || payload.status === "loading_diarizer") {
-          statusEl.textContent = "Identifying speakers...";
-          setTabTitle(`speakers · ${(item && item.file && item.file.name) || ""}`);
-        } else if (payload.status === "diarizing") {
-          statusEl.textContent = "Diarizing audio...";
         } else if (payload.status === "result") {
           const words = countWords(payload.text);
           const createdAt = Date.now();

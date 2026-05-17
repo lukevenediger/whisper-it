@@ -32,6 +32,7 @@ describeOrSkip("POST /api/attribute (live OpenRouter)", () => {
       .post("/api/attribute")
       .send({
         model: "anthropic/claude-haiku-4-5",
+        speakerCount: 2,
         segments: [
           { start: 0, end: 2, text: "Hi everyone, my name is Alice and I run product marketing." },
           { start: 2, end: 4, text: "Hi Alice, nice to meet you. I'm Bob, engineering lead." },
@@ -48,11 +49,11 @@ describeOrSkip("POST /api/attribute (live OpenRouter)", () => {
     const events = parseEvents(res.text);
     const result = events.find((e) => e.status === "result");
     expect(result, `no result event; events: ${JSON.stringify(events)}`).toBeDefined();
-    // Most segments should have a named speaker, not SPEAKER_??
     const named = result.segments.filter((s: any) => s.speaker !== "SPEAKER_??").length;
     expect(named).toBeGreaterThanOrEqual(3);
-    // Speakers list should contain at least one of the provided names
     const lower = (result.speakers as string[]).map((s) => s.toLowerCase());
     expect(lower.some((s) => s.includes("alice") || s.includes("bob"))).toBe(true);
+    expect(Array.isArray(result.ambiguous)).toBe(true);
+    expect(typeof result.notes).toBe("string");
   }, 60_000);
 });

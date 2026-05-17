@@ -34,18 +34,17 @@ First transcription with a given model will be slower -- it downloads the model 
 
 ### Optional: enable speaker attribution
 
-Copy the env template and fill in only what you need. Basic transcription works without any of this.
+Speaker attribution is cloud-only (LLM-based) and is opt-in per transcript -- never inline with normal transcription.
 
 ```bash
 cp .env.example .env
-$EDITOR .env       # fill in HF_TOKEN and/or OPENROUTER_API_KEY
+$EDITOR .env       # fill in OPENROUTER_API_KEY
 make run
 ```
 
-- **On-device diarization** -- set `WHISPER_DIARIZE=1` and `HF_TOKEN=hf_...`. `HF_TOKEN` is a **HuggingFace** token (free account); accept the gated-model terms at https://huggingface.co/pyannote/speaker-diarization-3.1 first.
-- **Cloud attribution with named speakers** -- set `OPENROUTER_API_KEY=sk-or-...`. This is an **OpenRouter** key (paid per token, https://openrouter.ai/keys). Users without server-side key can paste their own key in the attribute screen (BYOK).
-
-`HF_TOKEN` and `OPENROUTER_API_KEY` are for two unrelated services. Setting one does not affect the other.
+- Set `OPENROUTER_API_KEY=sk-or-...` (https://openrouter.ai/keys) to expose a server-side key.
+- Users without a server key can paste their own in the attribute screen (BYOK).
+- On a transcript: click **Attribute** → fill in speaker names + roles + expected speaker count → submit. The result lands as a new sibling history entry; the original is never overwritten. Ambiguous segments are highlighted; click **Refine** to add more context and re-run.
 
 ## Features
 
@@ -62,9 +61,7 @@ make run
 - **Waveform display** -- Audacity-style waveform of your audio
 - **Save transcript .txt** -- Per-history-item Download button, named after source file
 - **Save batch .zip** -- Per-batch zip download (one .txt per source audio, named after source filename)
-- **Speaker attribution (opt-in)** -- Two paths, both off by default and never inline:
-  - _On-device_: enable `WHISPER_DIARIZE=1` + `HF_TOKEN`, then tick the "Attribute speakers" toggle before transcribing. Runs pyannote.audio 3.1 locally; labels segments `SPEAKER_00`/`SPEAKER_01`/…
-  - _Cloud (named)_: open any history item → **Attribute** button → `/attribute.html`. Supply speaker names + roles; calls OpenRouter (server key or BYOK) to get named labels. Result is saved as a new sibling history entry — the original is never overwritten.
+- **Speaker attribution (opt-in, cloud)** -- Open any history item → **Attribute** → `/attribute.html`. Provide speaker names + roles, expected speaker count, and optional context. Calls OpenRouter (server key or BYOK) for a named-speaker JSON assignment. Ambiguous segments are highlighted; **Refine** lets you add more context and re-run without leaving the screen. Result is saved as a new sibling history entry — the original is never overwritten. Never inline with the basic transcribe flow.
 - **Share** -- Uses OS-level share sheet (WhatsApp, Telegram, Messages, etc.) on supported browsers
 - **Mic selector** -- Pick which microphone to use when multiple are available
 - **Persistent stats** -- `/stats.html` shows total counts, audio duration, words, by-model/by-language breakdowns, last-30-days chart, longest item, recent activity. Persisted across restarts in the `whisper-data` volume.
@@ -91,30 +88,29 @@ Transcription progress is streamed to the browser via Server-Sent Events (SSE). 
 ```
 whisper-it/
 ├── docker-compose.yml       # Single service, port 4000, model + data volumes, mem_limit 8g, env passthrough
-├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + (CPU) torch + pyannote, thread caps + commit ARG
+├── Dockerfile               # node:20-slim + Python 3 + faster-whisper, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
-├── .env.example             # Documented template for HF_TOKEN + OPENROUTER_API_KEY + WHISPER_DIARIZE
+├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_DEBUG_FIXTURES
 ├── package.json             # Express, multer, archiver, TypeScript + test/lint deps
 ├── tsconfig.json
 ├── transcribe.py            # Python: loads faster-whisper, transcribes, JSON out; cpu_threads/num_workers/beam_size from env
-├── diarize.py               # Python: pyannote.audio 3.1 speaker diarization; stdin segments, stdout labeled segments
 ├── src/
 │   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen
-│   ├── app.ts               # Configured Express app: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute, static. Exported for in-process supertest.
+│   ├── app.ts               # Configured Express app: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures, static. Exported for in-process supertest.
 │   ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
 │   ├── lib/
-│   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / fallback)
+│   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / ambiguous + notes / fallback)
 │   │   ├── sanitize.ts      # sanitizeZipName
 │   │   └── words.ts         # countWords
 │   └── public/
-│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / diarize toggle
+│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip
 │       ├── stats.html       # Stats dashboard
-│       └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK)
+│       └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK), with speaker count + iteration
 ├── tests/
-│   ├── unit/                # vitest TS + pytest python (diarize.merge cases)
+│   ├── unit/                # vitest TS
 │   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container
-│   ├── e2e/                 # Playwright specs (basic, retranscribe, batch, language, history, recording, attribute, mobile, diarize)
+│   ├── e2e/                 # Playwright specs (basic, retranscribe, batch, language, history, recording, attribute, mobile)
 │   └── fixtures/
 │       ├── generate-audio.sh    # espeak-ng + ffmpeg → short/medium/multispeaker/silence-padded/spanish/long.wav
 │       ├── transcripts/         # Loose-match expected substrings
@@ -126,7 +122,6 @@ whisper-it/
 ├── ruff.toml + pytest.ini + requirements-dev.txt
 └── .github/workflows/
     ├── ci.yml                # lint / typecheck / unit / integration / e2e / docker-build (parallel, cancel-in-progress)
-    ├── nightly.yml           # Pyannote diarization e2e on cron + workflow_dispatch + "test-diarize" PR label
     └── publish.yml           # Multi-arch Docker Hub push on main + semver tags
 ```
 
@@ -149,20 +144,25 @@ whisper-it/
 ### POST /api/transcribe
 
 - **Content-Type:** multipart/form-data
-- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional), `diarize` (string "true", optional — only honored when `WHISPER_DIARIZE=1` server-side)
-- **Response:** SSE stream with events: `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `diarize_starting` / `loading_diarizer` / `diarizing` (when `diarize=true`), `result` (with text, segments, language, duration; also `speakers` array + per-segment `speaker` field when diarization ran), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
+- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
+- **Response:** SSE stream with events: `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `result` (with text, segments, language, duration), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
 - **Max file size:** 100MB
-- Audio file is deleted from disk immediately after the request (and any diarization pass) completes.
+- Audio file is deleted from disk immediately after the request completes.
 
 ### POST /api/attribute
 
 Cloud post-process for speaker attribution. Calls OpenRouter on the server's behalf.
 
 - **Content-Type:** application/json
-- **Body:** `{ segments: [{start, end, text}], speakers: [{name, description?}], model?, byokKey? }`
+- **Body:** `{ segments: [{start, end, text}], speakers: [{name, description?}], speakerCount?: number | "auto", extraContext?: string, model?, byokKey? }`
 - **Auth:** uses `byokKey` if provided, else `process.env.OPENROUTER_API_KEY`. Returns an error if neither is set.
-- **Response:** SSE stream with events: `attributing` (with `model`, `segmentCount`, `speakerCount`), `result` (with merged segments + `speakers` array + optional `warning`), `error`.
+- **Response:** SSE stream — `attributing` (with `model`, `segmentCount`, `speakerCount`, `rosterSize`), `result` (with merged `segments`, `speakers` array, `ambiguous` index list, `notes` string, optional `warning`), `error`.
 - **Privacy:** request body is never logged. The key is read into memory once per request and forwarded to OpenRouter only.
+
+### Debug-only endpoints (gated by `WHISPER_DEBUG_FIXTURES=1`)
+
+- `GET /api/debug/fixtures` — list audio fixtures mounted at `/fixtures` (compose mounts `tests/fixtures/audio:/fixtures:ro`).
+- `GET /api/debug/fixture-file/:name` — serves a single fixture for the UI's debug picker. Path-validated; 404 when feature disabled.
 
 ### GET /api/stats
 
@@ -174,25 +174,24 @@ Body `{files: [{name, text}], zipName}` → returns `application/zip` attachment
 
 ### GET /api/version
 
-Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasDiarize, hasServerKey}`. `hasDiarize` reflects `WHISPER_DIARIZE`; `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set. Client uses these to gate UI controls.
+Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, hasDebugFixtures}`. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; `hasDebugFixtures` reflects whether the debug fixtures dropdown is enabled. Client uses these to gate UI controls.
 
 ## Tunable env
 
-| Var                                                            | Default   | Notes                                                                                                                                                                                                           |
-| -------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                                                         | `4000`    | HTTP port                                                                                                                                                                                                       |
-| `WHISPER_MODELS_DIR`                                           | `/models` | model weight cache                                                                                                                                                                                              |
-| `WHISPER_DATA_DIR`                                             | `/data`   | stats.json location                                                                                                                                                                                             |
-| `WHISPER_COMMIT`                                               | `dev`     | injected via build arg                                                                                                                                                                                          |
-| `WHISPER_CPU_THREADS`                                          | `2`       | ctranslate2 cpu threads                                                                                                                                                                                         |
-| `WHISPER_NUM_WORKERS`                                          | `1`       | ctranslate2 workers                                                                                                                                                                                             |
-| `WHISPER_BEAM_SIZE`                                            | `5`       | decoder beam                                                                                                                                                                                                    |
-| `WHISPER_CHUNK_THRESHOLD_SEC`                                  | `1200`    | audio > N sec triggers ffmpeg chunking                                                                                                                                                                          |
-| `WHISPER_CHUNK_SECONDS`                                        | `600`     | chunk length when chunking kicks in                                                                                                                                                                             |
-| `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2`       | BLAS thread caps                                                                                                                                                                                                |
-| `WHISPER_DIARIZE`                                              | `0`       | Set `1` to enable on-device speaker attribution (pyannote.audio 3.1). Requires `HF_TOKEN`.                                                                                                                      |
-| `HF_TOKEN`                                                     | _(unset)_ | **HuggingFace** token (NOT OpenRouter -- different service). Used to fetch pyannote weights on first run; the model is gated, so accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1 first. |
-| `OPENROUTER_API_KEY`                                           | _(unset)_ | **OpenRouter** API key (NOT HuggingFace -- different service). Server-side key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged.                |
+| Var                                                            | Default   | Notes                                                                                                                                |
+| -------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                                                         | `4000`    | HTTP port                                                                                                                            |
+| `WHISPER_MODELS_DIR`                                           | `/models` | model weight cache                                                                                                                   |
+| `WHISPER_DATA_DIR`                                             | `/data`   | stats.json location                                                                                                                  |
+| `WHISPER_COMMIT`                                               | `dev`     | injected via build arg                                                                                                               |
+| `WHISPER_CPU_THREADS`                                          | `2`       | ctranslate2 cpu threads                                                                                                              |
+| `WHISPER_NUM_WORKERS`                                          | `1`       | ctranslate2 workers                                                                                                                  |
+| `WHISPER_BEAM_SIZE`                                            | `5`       | decoder beam                                                                                                                         |
+| `WHISPER_CHUNK_THRESHOLD_SEC`                                  | `1200`    | audio > N sec triggers ffmpeg chunking                                                                                               |
+| `WHISPER_CHUNK_SECONDS`                                        | `600`     | chunk length when chunking kicks in                                                                                                  |
+| `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2`       | BLAS thread caps                                                                                                                     |
+| `OPENROUTER_API_KEY`                                           | _(unset)_ | OpenRouter API key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged. |
+| `WHISPER_DEBUG_FIXTURES`                                       | `0`       | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI. Compose mounts the fixtures dir at `/fixtures:ro`.  |
 
 ## Development (without Docker)
 
@@ -241,6 +240,15 @@ npm run fixtures               # uses espeak-ng + ffmpeg
 - Outputs to `tests/fixtures/audio/` which is gitignored
 - Required tools: `brew install espeak-ng` on macOS, `apt-get install espeak-ng` on Linux (CI installs this automatically)
 
+`tests/fixtures/generate-conversations.sh` (npm run fixtures:conversations) produces longer multi-speaker dialogues for diarization stress tests, encoded as mp3:
+
+- `conv-2p-1min.mp3` / `conv-2p-10min.mp3` — Alice + Bob (en+f3, en+m3)
+- `conv-3p-1min.mp3` / `conv-3p-10min.mp3` — Alice + Bob + Carol (en+f3, en+m3, en+f5)
+- Source dialogue scripts live in `tests/fixtures/dialogues/conv-Np.txt` (format: `VOICE|text` per turn). 10-min versions loop the base dialogue to fill the duration.
+- mono 22.05 kHz 64 kbps mp3 — small enough to upload through the /api/transcribe 100 MB limit even at 10 minutes (~4.6 MB each)
+
+For real-world validation beyond eSpeak's robotic voices (overlap, accents, room noise), see [tests/fixtures/CORPORA.md](tests/fixtures/CORPORA.md) — pointers to VoxConverse, AMI Meeting Corpus, and DIHARD III with access + licensing notes. These are dev-side only, never in CI.
+
 ### Required CI secrets
 
 Set in GitHub repo settings → Secrets and variables → Actions:
@@ -248,24 +256,15 @@ Set in GitHub repo settings → Secrets and variables → Actions:
 | Secret                                   | Purpose                      | Used by                                |
 | ---------------------------------------- | ---------------------------- | -------------------------------------- |
 | `OPENROUTER_API_KEY`                     | Real cloud-attribution tests | `integration` + `e2e` jobs on every PR |
-| `HF_TOKEN`                               | Pyannote weights download    | `nightly` workflow only                |
 | `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Image publishing             | existing `publish` workflow            |
-
-### Pyannote (on-device diarization) E2E
-
-Heavier path. Not run on every PR. Triggers:
-
-- Nightly cron at 03:00 UTC
-- Manual via the Actions tab → "Nightly diarization E2E" → Run workflow
-- Apply the `test-diarize` label to a PR
 
 ## Status
 
 - All source files compile clean (`npm run typecheck`)
 - Lint clean (`npm run lint` + `ruff check .`)
-- Unit tests pass (vitest + pytest)
+- Unit tests pass (vitest)
 - Integration tests pass (supertest, msw, real OpenRouter)
 - E2E tests pass (Playwright; chromium + webkit + iPhone projects)
 - Docker build and run tested via `make run`
 - CI runs lint / typecheck / unit / integration / e2e / docker-build jobs in parallel on every push and PR
-- Nightly cron runs the heavier on-device pyannote diarization E2E
+- Speaker attribution is cloud-only (OpenRouter LLM with named speakers + ambiguity feedback + iteration). On-device pyannote diarization was removed in favour of this approach — it returned synthetic speaker IDs while users wanted names, and the dep footprint (1GB+ image, 4 conflicting pins, 8GB+ memory, two HF-gated models) was disproportionate.
