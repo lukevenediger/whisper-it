@@ -6,9 +6,46 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npm run lint
+      - run: pip install ruff
+      - run: ruff check .
+
   typecheck:
-    name: TypeScript
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: python3 -m py_compile transcribe.py
+
+  unit:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,24 +54,89 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npm run test:unit
 
-  python-syntax:
-    name: Python
+  integration:
+    name: Integration tests
     runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - run: python3 -m py_compile transcribe.py
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install espeak-ng + ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Generate audio fixtures
+        run: bash tests/fixtures/generate-audio.sh
+
+      - name: Cache whisper model weights
+        uses: actions/cache@v4
+        with:
+          path: whisper-models-cache
+          key: whisper-models-tiny-v1
+
+      - name: Start whisper-it container
+        run: |
+          mkdir -p whisper-models-cache whisper-data-cache
+          docker compose up --build -d
+          # Wait for /api/version to respond
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4000/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:4000/api/version
+
+      - name: Run Playwright (against running container)
+        env:
+          E2E_BASE_URL: http://localhost:4000
+          E2E_NO_SERVER: "1"
+        # Skip recording project: fake-device flag conflicts with docker-running mode
+        run: npx playwright test --project=chromium --project=webkit --project=mobile-iphone
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v7
         with:
           context: .

@@ -13,6 +13,7 @@
 ### Task 1: Python Download Progress Reporting
 
 **Files:**
+
 - Modify: `transcribe.py`
 
 **Context:** faster-whisper uses huggingface_hub internally to download models. huggingface_hub's `snapshot_download` uses `hf_transfer` or `tqdm` for progress. We can monkey-patch tqdm to capture download progress and emit structured JSON to stderr.
@@ -104,6 +105,7 @@ if __name__ == "__main__":
 ```
 
 Key changes:
+
 - `emit()` helper writes JSON to stderr
 - `patch_tqdm()` monkey-patches tqdm before importing faster-whisper so download progress is captured
 - Status events: `loading_model` -> `downloading` (with progress %) -> `transcribing` -> stdout result
@@ -125,6 +127,7 @@ git commit -m "feat: add stderr progress reporting to transcribe.py"
 ### Task 2: Node SSE Streaming
 
 **Files:**
+
 - Modify: `src/server.ts`
 
 **Context:** Currently the POST handler awaits the full Python result then returns JSON. Change it to set SSE headers and stream events as Python emits stderr lines. The final stdout is sent as a `result` event.
@@ -183,7 +186,10 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
   });
 
   proc.stderr.on("data", (data) => {
-    const lines = data.toString().split("\n").filter((l: string) => l.trim());
+    const lines = data
+      .toString()
+      .split("\n")
+      .filter((l: string) => l.trim());
     for (const line of lines) {
       try {
         const parsed = JSON.parse(line);
@@ -204,7 +210,9 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
         const result = JSON.parse(stdout);
         res.write(`data: ${JSON.stringify({ status: "result", ...result })}\n\n`);
       } catch {
-        res.write(`data: ${JSON.stringify({ status: "error", error: "Failed to parse output" })}\n\n`);
+        res.write(
+          `data: ${JSON.stringify({ status: "error", error: "Failed to parse output" })}\n\n`,
+        );
       }
     }
     res.end();
@@ -229,6 +237,7 @@ app.listen(PORT, () => {
 ```
 
 Key changes:
+
 - Response is now `text/event-stream` instead of `application/json`
 - Stderr lines parsed as JSON and forwarded as SSE `data:` events
 - Final result sent as `{status: "result", text, segments, ...}`
@@ -251,6 +260,7 @@ git commit -m "feat: stream transcription progress via SSE"
 ### Task 3: Frontend — Recording Visualizer + Timer
 
 **Files:**
+
 - Modify: `src/public/index.html`
 
 **Context:** The single HTML file has all CSS and JS inline. Add a canvas-based audio visualizer and timer that appear during recording, replacing the drop zone content.
@@ -261,22 +271,49 @@ After the existing `.error` CSS block (line ~67), add:
 
 ```css
 .recording-viz {
-  display: none; flex-direction: column; align-items: center; gap: 0.75rem;
-  padding: 1.5rem; border: 2px solid #d32f2f; border-radius: 8px;
-  background: rgba(211,47,47,0.05); margin-bottom: 1rem;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  border: 2px solid #d32f2f;
+  border-radius: 8px;
+  background: rgba(211, 47, 47, 0.05);
+  margin-bottom: 1rem;
 }
-.recording-viz.visible { display: flex; }
-.recording-viz canvas { width: 100%; height: 60px; border-radius: 4px; }
-.recording-timer { font-size: 1.5rem; font-weight: 600; color: #d32f2f; font-variant-numeric: tabular-nums; }
+.recording-viz.visible {
+  display: flex;
+}
+.recording-viz canvas {
+  width: 100%;
+  height: 60px;
+  border-radius: 4px;
+}
+.recording-timer {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #d32f2f;
+  font-variant-numeric: tabular-nums;
+}
 
 .progress-bar-container {
-  width: 100%; background: #252525; border-radius: 4px; height: 6px;
-  margin-top: 0.5rem; overflow: hidden; display: none;
+  width: 100%;
+  background: #252525;
+  border-radius: 4px;
+  height: 6px;
+  margin-top: 0.5rem;
+  overflow: hidden;
+  display: none;
 }
-.progress-bar-container.visible { display: block; }
+.progress-bar-container.visible {
+  display: block;
+}
 .progress-bar {
-  height: 100%; background: #5b8def; border-radius: 4px;
-  transition: width 0.3s ease; width: 0%;
+  height: 100%;
+  background: #5b8def;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  width: 0%;
 }
 ```
 
@@ -388,7 +425,9 @@ recordBtn.addEventListener("click", async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioChunks = [];
     mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
     mediaRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
       stopVisualizer();
@@ -437,6 +476,7 @@ git commit -m "feat: add recording visualizer with audio bars and timer"
 ### Task 4: Frontend — Streaming Progress + Download Bar
 
 **Files:**
+
 - Modify: `src/public/index.html`
 
 **Context:** Replace the fetch().json() call with a streaming fetch that reads SSE events line by line. Show a progress bar during model download and appropriate status text for each phase.
@@ -498,7 +538,13 @@ async function doTranscribe(modelOverride) {
           progressContainer.classList.remove("visible");
           status.textContent = "Transcribing...";
         } else if (payload.status === "result") {
-          lastResult = { text: payload.text, segments: payload.segments, language: payload.language, duration: payload.duration, model: modelToUse };
+          lastResult = {
+            text: payload.text,
+            segments: payload.segments,
+            language: payload.language,
+            duration: payload.duration,
+            model: modelToUse,
+          };
           transcript.textContent = payload.text;
           meta.textContent = `${payload.language} \u2022 ${formatDuration(payload.duration)} \u2022 ${payload.segments.length} segments \u2022 ${modelToUse} model`;
           resultEl.classList.add("visible");
@@ -537,6 +583,7 @@ git commit -m "feat: stream transcription progress with download percentage"
 ### Task 5: Frontend — Re-transcribe with Model Badge
 
 **Files:**
+
 - Modify: `src/public/index.html`
 
 **Context:** After transcription, show which model was used and let the user re-transcribe with a different model without re-uploading.
@@ -546,10 +593,20 @@ git commit -m "feat: stream transcription progress with download percentage"
 Inside the `.result` div, after the `.transcript` div, add:
 
 ```html
-<div class="retranscribe" id="retranscribe" style="display:none; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #333;">
+<div
+  class="retranscribe"
+  id="retranscribe"
+  style="display:none; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #333;"
+>
   <span style="font-size: 0.85rem; color: #888;">Re-transcribe with:</span>
   <select id="retranscribeModel" style="margin-left: 0.5rem;"></select>
-  <button id="retranscribeBtn" class="btn-primary" style="margin-left: 0.5rem; padding: 0.3rem 0.75rem; font-size: 0.85rem;">Re-transcribe</button>
+  <button
+    id="retranscribeBtn"
+    class="btn-primary"
+    style="margin-left: 0.5rem; padding: 0.3rem 0.75rem; font-size: 0.85rem;"
+  >
+    Re-transcribe
+  </button>
 </div>
 ```
 
@@ -591,6 +648,7 @@ git commit -m "feat: add re-transcribe with different model selection"
 ### Task 6: Frontend — Share Button
 
 **Files:**
+
 - Modify: `src/public/index.html`
 
 **Context:** Add a Share button that uses `navigator.share()` for OS-level sharing. Falls back to copy. Hidden when API unavailable.
@@ -619,7 +677,9 @@ shareBtn.addEventListener("click", async () => {
     if (err.name !== "AbortError") {
       navigator.clipboard.writeText(transcript.textContent);
       shareBtn.textContent = "Copied!";
-      setTimeout(() => { shareBtn.textContent = "Share"; }, 1500);
+      setTimeout(() => {
+        shareBtn.textContent = "Share";
+      }, 1500);
     }
   }
 });
@@ -656,6 +716,7 @@ Expected: Builds successfully
 
 Run: `docker compose up`
 Test:
+
 - Record audio: visualizer bars animate, timer counts up, stops properly
 - Upload file: transcribe with default model, see progress streaming
 - Result shows model name, transcript text, copy and share buttons work

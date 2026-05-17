@@ -12,8 +12,8 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 
 ## Screenshots
 
-| Start | After transcription |
-|-------|-------------------|
+| Start                                      | After transcription                                      |
+| ------------------------------------------ | -------------------------------------------------------- |
 | ![Start screen](docs/screenshot-start.png) | ![Transcription result](docs/screenshot-transcribed.png) |
 
 ## Features
@@ -32,7 +32,8 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Waveform display** -- See an Audacity-style waveform rendering of your audio.
 - **Word count** -- Results show language, duration, word count, segment count, and which model was used.
 - **Save transcript as file** -- Download any transcript as a `.txt` file, named after the source filename.
-- **Save batch as zip** -- For multi-file uploads, click the batch badge (or the per-item *Zip batch* button) to download every transcript in the batch as a single zip — one `.txt` per audio file, named after the originals.
+- **Save batch as zip** -- For multi-file uploads, click the batch badge (or the per-item _Zip batch_ button) to download every transcript in the batch as a single zip — one `.txt` per audio file, named after the originals.
+- **Speaker attribution (opt-in)** -- Open any transcription's _Attribute_ button to reach `/attribute.html`. Provide speaker names + roles, the expected number of speakers, and optional context. Whisper It calls an LLM (server-configured OpenRouter key or BYOK in the browser) and assigns a named speaker to every segment. Ambiguous segments are highlighted and you can _Refine_ with more context to re-run. The result is saved as a new sibling history entry — the original is never overwritten. Never inline with the basic transcribe flow.
 - **Persistent stats page** -- A `/stats.html` dashboard shows total transcriptions, audio duration processed, words produced, model and language breakdowns, last-30-days activity chart, longest item, and recent activity. Stats persist across container restarts via a Docker volume.
 - **Share** -- Uses the OS-level share sheet (WhatsApp, Telegram, Messages, AirDrop, email, etc.) on supported browsers. Falls back to clipboard copy.
 - **Microphone selector** -- When multiple mics are detected, pick the right one from a row of buttons. Your choice is remembered across sessions.
@@ -59,8 +60,8 @@ services:
     image: lukevenediger/whisper-it:latest
     ports: ["4000:4000"]
     volumes:
-      - whisper-models:/models   # cached model weights
-      - whisper-data:/data       # persistent stats
+      - whisper-models:/models # cached model weights
+      - whisper-data:/data # persistent stats
     mem_limit: 4g
     restart: unless-stopped
 volumes:
@@ -141,13 +142,13 @@ Transcription history lives in your browser's `localStorage` (capped at 100 entr
 
 ## Whisper Models
 
-| Model | Size | Speed | Accuracy | Best For |
-|-------|------|-------|----------|----------|
-| tiny | ~75 MB | Fastest | Lower | Quick drafts, short clips |
-| base | ~140 MB | Fast | Moderate | General use when speed matters |
-| **small** | ~460 MB | Moderate | **Good** | **Default. Best balance for CPU.** |
-| medium | ~1.5 GB | Slower | Better | When accuracy matters more than speed |
-| large-v3 | ~3 GB | Slowest | Best | Maximum accuracy, long or complex audio |
+| Model     | Size    | Speed    | Accuracy | Best For                                |
+| --------- | ------- | -------- | -------- | --------------------------------------- |
+| tiny      | ~75 MB  | Fastest  | Lower    | Quick drafts, short clips               |
+| base      | ~140 MB | Fast     | Moderate | General use when speed matters          |
+| **small** | ~460 MB | Moderate | **Good** | **Default. Best balance for CPU.**      |
+| medium    | ~1.5 GB | Slower   | Better   | When accuracy matters more than speed   |
+| large-v3  | ~3 GB   | Slowest  | Best     | Maximum accuracy, long or complex audio |
 
 All models run on CPU using int8 quantization via CTranslate2 for lower memory usage and faster inference.
 
@@ -158,6 +159,7 @@ If you want to integrate with Whisper It programmatically:
 ### POST /api/transcribe
 
 **Request:**
+
 ```
 Content-Type: multipart/form-data
 Fields:
@@ -212,6 +214,7 @@ Returns the aggregate stats JSON used by the stats page:
 Bundle a list of transcripts into a downloadable zip.
 
 **Request:**
+
 ```json
 {
   "files": [
@@ -244,20 +247,20 @@ Returns the build's commit hash, short label, and a direct link to the commit on
 
 ## Tuning & Environment Variables
 
-| Variable               | Default                          | Purpose                                                                                                  |
-|------------------------|----------------------------------|----------------------------------------------------------------------------------------------------------|
-| `PORT`                 | `4000`                           | HTTP port the Express server listens on.                                                                 |
-| `WHISPER_MODELS_DIR`   | `/models`                        | Where faster-whisper caches downloaded model weights.                                                    |
-| `WHISPER_DATA_DIR`     | `/data`                          | Where the server persists `stats.json`.                                                                  |
-| `WHISPER_COMMIT`       | `dev`                            | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer.     |
-| `WHISPER_CPU_THREADS`  | `2`                              | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                     |
-| `WHISPER_NUM_WORKERS`  | `1`                              | ctranslate2 worker count. Each worker = one set of scratch buffers.                                       |
-| `WHISPER_BEAM_SIZE`    | `5`                              | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                         |
-| `WHISPER_CHUNK_THRESHOLD_SEC` | `1200`                    | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                                  |
-| `WHISPER_CHUNK_SECONDS`| `600`                            | Length of each chunk when chunking kicks in (default 10 minutes).                                          |
-| `OMP_NUM_THREADS`      | `2`                              | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                         |
-| `MKL_NUM_THREADS`      | `2`                              | MKL/BLAS thread cap.                                                                                      |
-| `OPENBLAS_NUM_THREADS` | `2`                              | OpenBLAS thread cap.                                                                                      |
+| Variable                      | Default   | Purpose                                                                                              |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------- |
+| `PORT`                        | `4000`    | HTTP port the Express server listens on.                                                             |
+| `WHISPER_MODELS_DIR`          | `/models` | Where faster-whisper caches downloaded model weights.                                                |
+| `WHISPER_DATA_DIR`            | `/data`   | Where the server persists `stats.json`.                                                              |
+| `WHISPER_COMMIT`              | `dev`     | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer. |
+| `WHISPER_CPU_THREADS`         | `2`       | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                |
+| `WHISPER_NUM_WORKERS`         | `1`       | ctranslate2 worker count. Each worker = one set of scratch buffers.                                  |
+| `WHISPER_BEAM_SIZE`           | `5`       | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                    |
+| `WHISPER_CHUNK_THRESHOLD_SEC` | `1200`    | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                            |
+| `WHISPER_CHUNK_SECONDS`       | `600`     | Length of each chunk when chunking kicks in (default 10 minutes).                                    |
+| `OMP_NUM_THREADS`             | `2`       | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                    |
+| `MKL_NUM_THREADS`             | `2`       | MKL/BLAS thread cap.                                                                                 |
+| `OPENBLAS_NUM_THREADS`        | `2`       | OpenBLAS thread cap.                                                                                 |
 
 ### Memory & OOM
 

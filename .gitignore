@@ -2,5 +2,13 @@ node_modules/
 dist/
 models/
 *.tmp
+*.swp
 __pycache__/
 .claude/settings.local.json
+.env
+playwright-report/
+test-results/
+coverage/
+tests/fixtures/audio/
+.pytest_cache/
+.ruff_cache/
