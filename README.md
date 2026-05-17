@@ -33,7 +33,7 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Word count** -- Results show language, duration, word count, segment count, and which model was used.
 - **Save transcript as file** -- Download any transcript as a `.txt` file, named after the source filename.
 - **Save batch as zip** -- For multi-file uploads, click the batch badge (or the per-item _Zip batch_ button) to download every transcript in the batch as a single zip — one `.txt` per audio file, named after the originals.
-- **Speaker attribution (opt-in)** -- Open any transcription's _Attribute_ button to reach `/attribute.html`. Provide speaker names + roles, the expected number of speakers, and optional context. Whisper It calls an LLM (server-configured OpenRouter key or BYOK in the browser) and assigns a named speaker to every segment. Ambiguous segments are highlighted and you can _Refine_ with more context to re-run. The result is saved as a new sibling history entry — the original is never overwritten. Never inline with the basic transcribe flow.
+- **Speaker attribution (opt-in)** -- Click _Attribute_ on any transcription to open a modal. Optionally list the speakers (name + short role description) and pick a model from the dropdown. Whisper It calls an LLM via OpenRouter and assigns a named speaker to every segment. Leave the roster blank and the model guesses how many speakers there are and labels them `Speaker 1`, `Speaker 2`, …; fill it in and the model is locked to those names. Ambiguous segments get a `?` chip + a yellow highlight, with a short note from the model on how it resolved hard cases. Save promotes the result to a new sibling history entry — the original is never overwritten. Server-side `OPENROUTER_API_KEY` only — no per-user key entry. Never inline with the basic transcribe flow.
 - **Persistent stats page** -- A `/stats.html` dashboard shows total transcriptions, audio duration processed, words produced, model and language breakdowns, last-30-days activity chart, longest item, and recent activity. Stats persist across container restarts via a Docker volume.
 - **Share** -- Uses the OS-level share sheet (WhatsApp, Telegram, Messages, AirDrop, email, etc.) on supported browsers. Falls back to clipboard copy.
 - **Microphone selector** -- When multiple mics are detected, pick the right one from a row of buttons. Your choice is remembered across sessions.
@@ -152,6 +152,46 @@ Transcription history lives in your browser's `localStorage` (capped at 100 entr
 
 All models run on CPU using int8 quantization via CTranslate2 for lower memory usage and faster inference.
 
+## Speaker Attribution
+
+Optional. Off by default. Drop in an `OPENROUTER_API_KEY` and the **Attribute** button on each transcription opens a modal that:
+
+1. Lets you list the speakers (name + role) or skip it entirely.
+2. Lets you pick the LLM. Defaults to `deepseek/deepseek-v4-flash` (cheap + fast); also offers `qwen/qwen3.5-flash-02-23`, `google/gemma-4-31b-it`, `google/gemma-4-26b-a4b-it`.
+3. POSTs your transcript's segments to `/api/attribute`, which forwards to OpenRouter with a tight prompt asking for a structured JSON of the form `{assignments, ambiguous, notes}`.
+4. Renders the named result inline. Segments the model wasn't sure about are highlighted yellow and tagged with a `?` next to the speaker chip. The `notes` block tells you what context would have helped.
+5. **Save** writes the attributed version as a brand-new history entry next to the original (suffixed `(attributed)`); **Discard** throws it away. The original is never touched.
+
+### How the prompt adapts
+
+- **Roster provided** → prompt locks the model to those names only. Consistency across segments is enforced (re-use names, don't invent new ones).
+- **Roster empty** → prompt tells the model to first infer how many distinct speakers are talking from the dialogue, then label them `Speaker 1`, `Speaker 2`, `Speaker 3`, … in order of first appearance.
+
+Either way, the model is asked to emit JSON only — no markdown, no preamble. The server is forgiving: it strips ` ```json ` fences if present, falls back to a regex-extracted `{…}` block if the model wrapped the JSON in prose, and only after _all_ that fails does it emit a generic `Speaker 1 / Speaker 2 / …` alternating fallback with every segment marked ambiguous + a warning surfaced in the UI.
+
+### Why no on-device diarization
+
+A pyannote-based on-device path was tried and removed. Three reasons:
+
+1. It returns synthetic IDs like `SPEAKER_00` — users want names. The natural next step is feeding those back through an LLM to assign names, at which point the LLM was doing the real work anyway.
+2. Memory: pyannote spikes past 8 GiB on long files and was getting OOM-killed on Docker Desktop's default VM size.
+3. Dependency churn: pyannote 3.1 pinned old `torch` / `torchaudio` / `numpy<2` / `huggingface_hub<0.24` / matplotlib, all of which fought each other and added ~1.3 GB to the image.
+
+The LLM approach reads the dialogue's semantic cues ("Thanks Alice" → Bob is speaking) which is exactly the signal that matters for the common case (meetings, podcasts, interviews, voice memos). For purely acoustic separation without name cues, a future pyannote-as-optional path could come back; today's UX bets on the cloud LLM.
+
+### Cost
+
+Per-attribution cost is roughly the number of segments × a few hundred tokens of dialogue, run through a small model. With the default `deepseek/deepseek-v4-flash` and typical 5-15 minute transcripts, expect well under one US cent per attribution. Larger gemma models are an order of magnitude more expensive but rarely needed.
+
+### Required setup
+
+```bash
+echo "OPENROUTER_API_KEY=sk-or-..." >> .env
+make run
+```
+
+Get a key at <https://openrouter.ai/keys>. The key never leaves the server — the browser never sees it.
+
 ## API
 
 If you want to integrate with Whisper It programmatically:
@@ -229,7 +269,7 @@ Bundle a list of transcripts into a downloadable zip.
 
 ### GET /api/version
 
-Returns the build's commit hash, short label, and a direct link to the commit on GitHub:
+Returns the build's commit hash, short label, a direct link to the commit on GitHub, and the server's capability flags:
 
 ```json
 {
@@ -239,28 +279,66 @@ Returns the build's commit hash, short label, and a direct link to the commit on
   "commitUrl": "https://github.com/lukevenediger/whisper-it/commit/d47e8cafee08921c0999d2d85b0467170810f1f2",
   "github": "https://github.com/lukevenediger/whisper-it",
   "x": "https://x.com/jumpdest7d",
-  "xHandle": "@jumpdest7d"
+  "xHandle": "@jumpdest7d",
+  "hasServerKey": true,
+  "hasDebugFixtures": false
 }
 ```
 
-`short` is the last 4 chars of the commit hash (or `"dev"` if the build wasn't given `COMMIT_HASH`). The footer of every page renders this as `v·xxxx` linking to the exact commit.
+`short` is the last 4 chars of the commit hash (or `"dev"` if the build wasn't given `COMMIT_HASH`). The footer of every page renders this as `v·xxxx` linking to the exact commit. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; the Attribute modal will surface a clear error when it's `false`. `hasDebugFixtures` reflects `WHISPER_DEBUG_FIXTURES` and gates the dev-only fixtures dropdown described below.
+
+### POST /api/attribute
+
+Speaker attribution via an LLM. Streams Server-Sent Events.
+
+**Request:**
+
+```
+Content-Type: application/json
+Body:
+  segments:  (array,  required) [{ start: number, end: number, text: string }, ...]   // <=600
+  speakers:  (array,  optional) [{ name: string, description?: string }, ...]         // empty = guess + label "Speaker 1", "Speaker 2", ...
+  model:     (string, optional) any OpenRouter model id. Default: "deepseek/deepseek-v4-flash"
+```
+
+**Response:** SSE stream
+
+```
+data: {"status":"attributing","model":"deepseek/deepseek-v4-flash","rosterSize":2,"segmentCount":18}
+data: {"status":"result","segments":[{"start":0,"end":2.0,"text":"Hi everyone...","speaker":"Alice"}, ...],"speakers":["Alice","Bob"],"ambiguous":[7,11],"notes":"Segment 11 could be either speaker given the short reply.","model":"deepseek/deepseek-v4-flash","warning":null}
+```
+
+On failure, the final event is `{"status":"error","error":"..."}`. Common causes: server has no `OPENROUTER_API_KEY` set, OpenRouter returned an error (401, rate-limited, etc.), or the model emitted unparseable output (in which case the result event is still sent with a `warning` and an alternating fallback labelling).
+
+The server never logs request bodies; the OpenRouter key is read into memory per-request and forwarded only to `openrouter.ai`.
+
+### Debug endpoints (gated)
+
+When `WHISPER_DEBUG_FIXTURES=1` is set, two extra endpoints expose the audio fixtures mounted at `/fixtures` (compose mounts `tests/fixtures/audio:/fixtures:ro`):
+
+- `GET /api/debug/fixtures` → `{ dir, files: [{ name, sizeBytes }] }`
+- `GET /api/debug/fixture-file/:name` → serves the file. Path-validated; only audio extensions allowed.
+
+The frontend wires these into a dropdown + Run button on the main page so you can kick off the normal transcribe pipeline against a known file without dragging anything from your desktop. Off by default; intended for development only.
 
 ## Tuning & Environment Variables
 
-| Variable                      | Default   | Purpose                                                                                              |
-| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`                        | `4000`    | HTTP port the Express server listens on.                                                             |
-| `WHISPER_MODELS_DIR`          | `/models` | Where faster-whisper caches downloaded model weights.                                                |
-| `WHISPER_DATA_DIR`            | `/data`   | Where the server persists `stats.json`.                                                              |
-| `WHISPER_COMMIT`              | `dev`     | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer. |
-| `WHISPER_CPU_THREADS`         | `2`       | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                |
-| `WHISPER_NUM_WORKERS`         | `1`       | ctranslate2 worker count. Each worker = one set of scratch buffers.                                  |
-| `WHISPER_BEAM_SIZE`           | `5`       | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                    |
-| `WHISPER_CHUNK_THRESHOLD_SEC` | `1200`    | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                            |
-| `WHISPER_CHUNK_SECONDS`       | `600`     | Length of each chunk when chunking kicks in (default 10 minutes).                                    |
-| `OMP_NUM_THREADS`             | `2`       | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                    |
-| `MKL_NUM_THREADS`             | `2`       | MKL/BLAS thread cap.                                                                                 |
-| `OPENBLAS_NUM_THREADS`        | `2`       | OpenBLAS thread cap.                                                                                 |
+| Variable                      | Default   | Purpose                                                                                                                                                             |
+| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                        | `4000`    | HTTP port the Express server listens on.                                                                                                                            |
+| `WHISPER_MODELS_DIR`          | `/models` | Where faster-whisper caches downloaded model weights.                                                                                                               |
+| `WHISPER_DATA_DIR`            | `/data`   | Where the server persists `stats.json`.                                                                                                                             |
+| `WHISPER_COMMIT`              | `dev`     | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer.                                                                |
+| `WHISPER_CPU_THREADS`         | `2`       | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                                                                               |
+| `WHISPER_NUM_WORKERS`         | `1`       | ctranslate2 worker count. Each worker = one set of scratch buffers.                                                                                                 |
+| `WHISPER_BEAM_SIZE`           | `5`       | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                                                                                   |
+| `WHISPER_CHUNK_THRESHOLD_SEC` | `1200`    | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                                                                                           |
+| `WHISPER_CHUNK_SECONDS`       | `600`     | Length of each chunk when chunking kicks in (default 10 minutes).                                                                                                   |
+| `OMP_NUM_THREADS`             | `2`       | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                                                                                   |
+| `MKL_NUM_THREADS`             | `2`       | MKL/BLAS thread cap.                                                                                                                                                |
+| `OPENBLAS_NUM_THREADS`        | `2`       | OpenBLAS thread cap.                                                                                                                                                |
+| `OPENROUTER_API_KEY`          | _(unset)_ | OpenRouter key for the Speaker Attribution feature. When unset, the `/api/attribute` endpoint returns a clear error and the Attribute modal flags it. Never logged. |
+| `WHISPER_DEBUG_FIXTURES`      | `0`       | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI for quick local testing. Off in production.                                         |
 
 ### Memory & OOM
 
@@ -330,10 +408,15 @@ whisper-it/
 ├── tsconfig.json
 ├── transcribe.py            # Python: faster-whisper with progress reporting + tunable threads
 └── src/
-    ├── server.ts            # Express: /api/transcribe (SSE), /api/stats, /api/zip, /api/version
+    ├── server.ts            # Thin entry: imports app, runs startup sweep, calls app.listen
+    ├── app.ts               # Configured Express app: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures
     ├── stats.ts             # Persistent stats store (JSON file, atomic writes)
+    ├── lib/
+    │   ├── attribution.ts   # Prompt builder + JSON parser for the speaker-attribution feature
+    │   ├── sanitize.ts      # sanitizeZipName
+    │   └── words.ts         # countWords
     └── public/
-        ├── index.html       # Main UI (record / batch upload / history / footer)
+        ├── index.html       # Main UI (record / batch upload / history / footer / Attribute modal)
         └── stats.html       # Stats dashboard
 ```
 
