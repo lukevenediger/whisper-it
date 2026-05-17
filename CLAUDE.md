@@ -42,9 +42,10 @@ $EDITOR .env       # fill in OPENROUTER_API_KEY
 make run
 ```
 
-- Set `OPENROUTER_API_KEY=sk-or-...` (https://openrouter.ai/keys) to expose a server-side key.
-- Users without a server key can paste their own in the attribute screen (BYOK).
-- On a transcript: click **Attribute** → fill in speaker names + roles + expected speaker count → submit. The result lands as a new sibling history entry; the original is never overwritten. Ambiguous segments are highlighted; click **Refine** to add more context and re-run.
+- Set `OPENROUTER_API_KEY=sk-or-...` (https://openrouter.ai/keys). Server-key only — no BYOK.
+- On a transcript: click **Attribute** → modal pops up → optionally name the speakers → pick a model → submit. Result lands as a new sibling history entry; the original is never overwritten. Ambiguous segments are highlighted in the modal preview.
+- Empty roster: the prompt tells the model to guess speaker count and label them `Speaker 1`, `Speaker 2`, ...
+- Roster provided: the prompt locks the model to those names only.
 
 ## Features
 
@@ -61,7 +62,7 @@ make run
 - **Waveform display** -- Audacity-style waveform of your audio
 - **Save transcript .txt** -- Per-history-item Download button, named after source file
 - **Save batch .zip** -- Per-batch zip download (one .txt per source audio, named after source filename)
-- **Speaker attribution (opt-in, cloud)** -- Open any history item → **Attribute** → `/attribute.html`. Provide speaker names + roles, expected speaker count, and optional context. Calls OpenRouter (server key or BYOK) for a named-speaker JSON assignment. Ambiguous segments are highlighted; **Refine** lets you add more context and re-run without leaving the screen. Result is saved as a new sibling history entry — the original is never overwritten. Never inline with the basic transcribe flow.
+- **Speaker attribution (opt-in, cloud)** -- Click **Attribute** on any history item to open a modal. Optionally list the speakers (leave blank to let the model guess and label them `Speaker 1`/`Speaker 2`/...), pick an OpenRouter model from the dropdown, submit. Ambiguous segments are highlighted in the result preview. Save promotes it to a new sibling history entry — the original is never overwritten.
 - **Share** -- Uses OS-level share sheet (WhatsApp, Telegram, Messages, etc.) on supported browsers
 - **Mic selector** -- Pick which microphone to use when multiple are available
 - **Persistent stats** -- `/stats.html` shows total counts, audio duration, words, by-model/by-language breakdowns, last-30-days chart, longest item, recent activity. Persisted across restarts in the `whisper-data` volume.
@@ -104,9 +105,8 @@ whisper-it/
 │   │   ├── sanitize.ts      # sanitizeZipName
 │   │   └── words.ts         # countWords
 │   └── public/
-│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip
-│       ├── stats.html       # Stats dashboard
-│       └── attribute.html   # Cloud post-process: speaker attribution via OpenRouter (server key or BYOK), with speaker count + iteration
+│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip / attribute modal
+│       └── stats.html       # Stats dashboard
 ├── tests/
 │   ├── unit/                # vitest TS
 │   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container
@@ -154,10 +154,10 @@ whisper-it/
 Cloud post-process for speaker attribution. Calls OpenRouter on the server's behalf.
 
 - **Content-Type:** application/json
-- **Body:** `{ segments: [{start, end, text}], speakers: [{name, description?}], speakerCount?: number | "auto", extraContext?: string, model?, byokKey? }`
-- **Auth:** uses `byokKey` if provided, else `process.env.OPENROUTER_API_KEY`. Returns an error if neither is set.
-- **Response:** SSE stream — `attributing` (with `model`, `segmentCount`, `speakerCount`, `rosterSize`), `result` (with merged `segments`, `speakers` array, `ambiguous` index list, `notes` string, optional `warning`), `error`.
-- **Privacy:** request body is never logged. The key is read into memory once per request and forwarded to OpenRouter only.
+- **Body:** `{ segments: [{start, end, text}], speakers: [{name, description?}], model? }`. Speakers may be empty — the prompt then asks the model to guess speaker count and use `Speaker 1`/`Speaker 2`/... labels.
+- **Auth:** server-side `process.env.OPENROUTER_API_KEY`. No BYOK. Returns an error if the key is not set.
+- **Response:** SSE stream — `attributing` (with `model`, `segmentCount`, `rosterSize`), `result` (with merged `segments`, `speakers` array, `ambiguous` index list, `notes` string, optional `warning`), `error`.
+- **Privacy:** request body is never logged. The server key is forwarded to OpenRouter only.
 
 ### Debug-only endpoints (gated by `WHISPER_DEBUG_FIXTURES=1`)
 

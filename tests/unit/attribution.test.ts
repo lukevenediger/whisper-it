@@ -17,9 +17,19 @@ describe("buildAttributionPrompt", () => {
     expect(user).toContain("2. Bob");
   });
 
-  it("falls back to placeholder roster when no speakers given", () => {
-    const { user } = buildAttributionPrompt({ segments: [seg(0, 1, "hi")], speakers: [] });
-    expect(user).toContain("invent stable labels");
+  it("uses guess-and-label instructions when roster is empty", () => {
+    const { system } = buildAttributionPrompt({ segments: [seg(0, 1, "hi")], speakers: [] });
+    expect(system).toContain("infer how many distinct speakers");
+    expect(system).toContain('"Speaker 1"');
+    expect(system).toContain('"Speaker 2"');
+  });
+
+  it("locks to roster names when speakers are provided", () => {
+    const { system } = buildAttributionPrompt({
+      segments: [seg(0, 1, "hi")],
+      speakers: [{ name: "Alice" }],
+    });
+    expect(system).toContain("ONLY speaker names from the roster");
   });
 
   it("numbers segments with indices and timestamps", () => {
@@ -37,30 +47,6 @@ describe("buildAttributionPrompt", () => {
     expect(system).toContain("assignments");
     expect(system).toContain("ambiguous");
     expect(system).toContain("notes");
-  });
-
-  it("includes the expected speaker count when provided", () => {
-    const { user } = buildAttributionPrompt({
-      segments: [seg(0, 1, "hi")],
-      speakers: [],
-      speakerCount: 3,
-    });
-    expect(user).toContain("Expected speaker count: 3");
-  });
-
-  it("falls back to auto when no speakerCount provided", () => {
-    const { user } = buildAttributionPrompt({ segments: [seg(0, 1, "hi")], speakers: [] });
-    expect(user).toContain("auto-detect");
-  });
-
-  it("includes extraContext when provided", () => {
-    const { user } = buildAttributionPrompt({
-      segments: [seg(0, 1, "hi")],
-      speakers: [],
-      extraContext: "Alice usually drives the agenda.",
-    });
-    expect(user).toContain("Alice usually drives the agenda");
-    expect(user).toContain("Extra context from the user");
   });
 });
 
@@ -97,12 +83,6 @@ describe("applyAssignments", () => {
     expect(r.ambiguous.sort()).toEqual([0, 1]);
   });
 
-  it("parses JSON without assignments wrapper (raw mapping)", () => {
-    const raw = JSON.stringify({ "0": "Alice", "1": "Bob", "2": "Bob" });
-    const r = applyAssignments(s, raw);
-    expect(r.merged.map((m) => m.speaker)).toEqual(["Alice", "Bob", "Bob"]);
-  });
-
   it("strips markdown fences", () => {
     const raw =
       "```json\n" +
@@ -135,9 +115,9 @@ describe("applyAssignments", () => {
     expect(r.ambiguous.sort()).toEqual([1, 2]);
   });
 
-  it("falls back on malformed JSON and marks all ambiguous", () => {
+  it("falls back on malformed JSON with 'Speaker N' labels and marks all ambiguous", () => {
     const r = applyAssignments(s, "not json at all");
-    expect(r.merged.map((m) => m.speaker)).toEqual(["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]);
+    expect(r.merged.map((m) => m.speaker)).toEqual(["Speaker 1", "Speaker 2", "Speaker 1"]);
     expect(r.ambiguous).toEqual([0, 1, 2]);
     expect(r.warning).toMatch(/unparseable/i);
   });
@@ -154,7 +134,7 @@ describe("applyAssignments", () => {
     expect(r.ambiguous).toContain(1);
   });
 
-  it("default model export is stable", () => {
-    expect(ATTR_DEFAULT_MODEL).toMatch(/^[a-z\-]+\/[a-z0-9\-\.]+$/);
+  it("default model is deepseek-v4-flash", () => {
+    expect(ATTR_DEFAULT_MODEL).toBe("deepseek/deepseek-v4-flash");
   });
 });

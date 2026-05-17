@@ -3,10 +3,10 @@ import { seedHistory, makeHistoryItem } from "./helpers";
 
 test.describe.configure({ retries: 1 });
 
-// Cloud attribution — hits real OpenRouter. CI sets OPENROUTER_API_KEY as a secret.
-// If the server has no key configured, this test is a no-op.
+// Cloud attribution — modal-driven on the main page, hits real OpenRouter.
+// CI sets OPENROUTER_API_KEY as a secret. Skipped when no key configured.
 
-test("attribute screen labels a seeded transcript via real OpenRouter", async ({
+test("attribute modal labels a seeded transcript via real OpenRouter", async ({
   page,
   request,
 }) => {
@@ -23,38 +23,61 @@ test("attribute screen labels a seeded transcript via real OpenRouter", async ({
     ],
   });
   await seedHistory(page, [item]);
-  await page.goto(`/attribute.html?id=${item.id}`);
+  await page.goto("/");
+
+  // Click Attribute on the history item — opens modal
+  await page
+    .locator(".history-item-actions")
+    .first()
+    .getByRole("button", { name: /attribute/i })
+    .click();
+  await expect(page.locator("#attrModal")).toBeVisible();
 
   // Fill speaker rows
-  const rows = page.locator(".speaker-row");
+  const rows = page.locator("#attrSpeakerRows .speaker-row");
   await rows.nth(0).locator("input").first().fill("Alice");
   await rows.nth(0).locator("input").nth(1).fill("product marketing manager");
 
-  // Add second speaker
-  await page.locator("#addSpeakerBtn").click();
+  await page.locator("#attrAddSpeakerBtn").click();
   await rows.nth(1).locator("input").first().fill("Bob");
   await rows.nth(1).locator("input").nth(1).fill("engineering lead");
 
-  // Tell the model how many speakers to expect
-  await page.locator("#speakerCountInput").fill("2");
+  // Default model is fine; explicitly select to be safe.
+  await page.locator("#attrModelInput").selectOption("deepseek/deepseek-v4-flash");
 
-  // Use server key (already on since hasServerKey is true)
-  await page.locator("#keyServer").check();
+  await page.locator("#attrSubmitBtn").click();
 
-  // Use cheap model
-  await page.locator("#modelInput").fill("anthropic/claude-haiku-4-5");
+  await expect(page.locator("#attrResultBlock")).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator("#attrResultPreview")).toContainText(/alice|bob/i);
 
-  await page.locator("#submitBtn").click();
+  // Save the attributed result
+  await page.locator("#attrSaveBtn").click();
 
-  // Wait for result block to appear
-  await expect(page.locator("#resultBlock")).toBeVisible({ timeout: 90_000 });
-  // Result preview should contain at least one of the names
-  await expect(page.locator("#resultPreview")).toContainText(/alice|bob/i);
-
-  // Save as new history entry
-  await page.locator("#saveBtn").click();
-  await page.waitForURL("**/");
-
+  // Modal closes, new entry appears at top of history
+  await expect(page.locator("#attrModal")).toBeHidden();
   const titles = page.locator(".history-item-title");
   await expect(titles.first()).toContainText(/attributed/i);
+});
+
+test("attribute modal opens with empty roster + closes on Escape", async ({ page, request }) => {
+  const version = await (await request.get("/api/version")).json();
+  test.skip(!version.hasServerKey, "server has no OPENROUTER_API_KEY configured");
+
+  const item = makeHistoryItem({
+    title: "Quick check",
+    segments: [{ start: 0, end: 1, text: "hi" }],
+  });
+  await seedHistory(page, [item]);
+  await page.goto("/");
+
+  await page
+    .locator(".history-item-actions")
+    .first()
+    .getByRole("button", { name: /attribute/i })
+    .click();
+  await expect(page.locator("#attrModal")).toBeVisible();
+
+  // Escape closes
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#attrModal")).toBeHidden();
 });

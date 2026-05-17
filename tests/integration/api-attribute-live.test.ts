@@ -31,8 +31,7 @@ describeOrSkip("POST /api/attribute (live OpenRouter)", () => {
     const res = await request(app)
       .post("/api/attribute")
       .send({
-        model: "anthropic/claude-haiku-4-5",
-        speakerCount: 2,
+        model: "deepseek/deepseek-v4-flash",
         segments: [
           { start: 0, end: 2, text: "Hi everyone, my name is Alice and I run product marketing." },
           { start: 2, end: 4, text: "Hi Alice, nice to meet you. I'm Bob, engineering lead." },

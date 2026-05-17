@@ -95,6 +95,64 @@
   .speaker-tag.s4 { background: #5a2a7a; color: #e6cdff; }
   .speaker-tag.s5 { background: #2a7a7a; color: #c0f0f0; }
 
+  .attr-modal { position: fixed; inset: 0; z-index: 1000; }
+  .attr-modal-backdrop {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+  }
+  .attr-modal-panel {
+    position: relative; max-width: 640px; width: calc(100% - 2rem);
+    margin: 4vh auto; max-height: 92vh; overflow-y: auto;
+    background: #141414; border: 1px solid #2a2a2a; border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .attr-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.8rem 1rem; border-bottom: 1px solid #222;
+  }
+  .attr-modal-header h2 { font-size: 1.1rem; color: #fff; margin: 0; }
+  .attr-modal-close {
+    background: transparent; border: none; color: #888; font-size: 1.4rem;
+    line-height: 1; cursor: pointer; padding: 0.2rem 0.5rem;
+  }
+  .attr-modal-close:hover { color: #fff; }
+  .attr-modal-body { padding: 1rem; }
+  .attr-modal-body .hint { font-size: 0.8rem; color: #888; }
+  .attr-modal-body .hint code { font-family: ui-monospace, monospace; color: #aaa; }
+  .attr-field-label { display: block; font-size: 0.8rem; color: #aaa; margin: 0.9rem 0 0.3rem; }
+  .attr-modal-body select { padding: 0.45rem 0.6rem; min-width: 16rem; }
+  .attr-actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+  .attr-actions button { padding: 0.45rem 0.9rem; }
+  #attrSpeakerRows .speaker-row {
+    display: grid; grid-template-columns: 1fr 1.6fr auto; gap: 0.4rem; margin-bottom: 0.4rem;
+  }
+  #attrSpeakerRows input {
+    padding: 0.4rem 0.6rem; border-radius: 5px; border: 1px solid #333;
+    background: #1a1a1a; color: #e0e0e0; font-size: 0.85rem;
+  }
+  #attrSpeakerRows button.remove { padding: 0.3rem 0.6rem; color: #888; font-size: 0.8rem; }
+  .attr-result-block {
+    margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid #2a3f5f;
+    border-radius: 6px; background: rgba(91,141,239,0.04);
+  }
+  .attr-result-block h3 { font-size: 0.95rem; color: #ddd; margin-bottom: 0.5rem; }
+  .attr-result-notes {
+    margin-bottom: 0.6rem; padding: 0.5rem 0.7rem;
+    background: rgba(91,141,239,0.08); border-left: 3px solid #5b8def;
+    font-size: 0.85rem; color: #cdd9f0; white-space: pre-wrap;
+  }
+  .attr-ambiguous-summary {
+    margin-bottom: 0.5rem; padding: 0.4rem 0.7rem;
+    background: rgba(230,185,85,0.08); border-left: 3px solid #e6b955;
+    font-size: 0.8rem; color: #e6b955;
+  }
+  .speaker-line.ambiguous {
+    background: rgba(230,185,85,0.06); border-left: 3px solid #e6b955;
+    padding: 0.2em 0.4em; margin-left: -0.4em;
+  }
+  .status.warn { color: #e6b955; }
+  .btn-ghost { background: transparent; border: 1px solid #2a2a2a; color: #aaa; }
+  .btn-ghost:hover { background: #1a1a1a; }
+
   .recording-viz {
     display: none; flex-direction: column; align-items: center; gap: 0.75rem;
     padding: 1.5rem; border: 2px solid #d32f2f; border-radius: 8px;
@@ -379,6 +437,46 @@
   </div>
 </div>
 
+<div class="attr-modal" id="attrModal" role="dialog" aria-modal="true" aria-labelledby="attrModalTitle" style="display:none">
+  <div class="attr-modal-backdrop" id="attrModalBackdrop"></div>
+  <div class="attr-modal-panel">
+    <div class="attr-modal-header">
+      <h2 id="attrModalTitle">Attribute speakers</h2>
+      <button class="attr-modal-close" id="attrModalClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="attr-modal-body">
+      <div class="hint">Optionally list the speakers. Leave blank to let the model guess and label them <code>Speaker 1</code>, <code>Speaker 2</code>, …</div>
+      <div id="attrSpeakerRows" style="margin-top:0.6rem"></div>
+      <button id="attrAddSpeakerBtn" class="btn-ghost" style="margin-top:0.3rem">+ Add speaker</button>
+
+      <label class="attr-field-label" for="attrModelInput">Model</label>
+      <select id="attrModelInput">
+        <option value="deepseek/deepseek-v4-flash">deepseek/deepseek-v4-flash (default)</option>
+        <option value="qwen/qwen3.5-flash-02-23">qwen/qwen3.5-flash-02-23</option>
+        <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
+        <option value="google/gemma-4-26b-a4b-it">google/gemma-4-26b-a4b-it</option>
+      </select>
+
+      <div class="attr-actions">
+        <button id="attrSubmitBtn" class="btn-primary">Attribute</button>
+        <button id="attrCancelBtn">Cancel</button>
+      </div>
+      <div class="status" id="attrStatus"></div>
+
+      <div id="attrResultBlock" class="attr-result-block" style="display:none">
+        <h3>Result</h3>
+        <div id="attrResultNotes" class="attr-result-notes" style="display:none"></div>
+        <div id="attrAmbiguousSummary" class="attr-ambiguous-summary" style="display:none"></div>
+        <div id="attrResultPreview"></div>
+        <div class="attr-actions">
+          <button id="attrSaveBtn" class="btn-primary">Save as new history entry</button>
+          <button id="attrDiscardBtn">Discard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = (s) => document.getElementById(s);
 const dropZone = $("dropZone");
@@ -432,6 +530,9 @@ fetch("/api/version").then(r => r.json()).then(v => {
     hasDebugFixtures: !!v.hasDebugFixtures,
   };
   if (serverCaps.hasDebugFixtures) setupDebugPanel();
+  // History may have rendered before this fetch resolved — re-render so capability-gated
+  // controls (the Attribute button) appear on existing items.
+  if (typeof renderHistory === "function") renderHistory();
 }).catch(() => {});
 
 function fmtSize(bytes) {
@@ -1340,10 +1441,10 @@ function renderHistory() {
     if (Array.isArray(it.segments) && it.segments.length > 0) {
       const attrBtn = document.createElement("button");
       attrBtn.textContent = hasSpeakers(it) ? "Re-attribute" : "Attribute";
-      attrBtn.title = "Open the speaker-attribution screen for this transcript";
+      attrBtn.title = "Pop up the speaker-attribution modal for this transcript";
       attrBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        window.location.href = `/attribute.html?id=${encodeURIComponent(it.id)}`;
+        openAttributeModal(it);
       });
       actions.appendChild(attrBtn);
     }
@@ -1484,6 +1585,221 @@ function triggerDownload(blob, filename) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
 }
+
+// --- Speaker attribution modal ---
+
+const ATTR_SPEAKERS_KEY = "whisper-it-speakers-recent";
+const ATTR_MODEL_KEY = "whisper-it-openrouter-model";
+let attrCurrentItem = null;
+let attrPendingResult = null;
+
+function openAttributeModal(it) {
+  attrCurrentItem = it;
+  attrPendingResult = null;
+
+  // Reset speaker rows from saved roster (if any)
+  const rows = $("attrSpeakerRows");
+  rows.innerHTML = "";
+  let initial = [];
+  try { initial = JSON.parse(localStorage.getItem(ATTR_SPEAKERS_KEY) || "[]"); } catch {}
+  if (initial.length === 0) addAttrSpeakerRow({ name: "", description: "" });
+  else initial.forEach(s => addAttrSpeakerRow(s));
+
+  // Restore last model choice if it's still in the dropdown
+  const modelEl = $("attrModelInput");
+  const valid = Array.from(modelEl.options).map(o => o.value);
+  const saved = localStorage.getItem(ATTR_MODEL_KEY) || "";
+  if (saved && valid.includes(saved)) modelEl.value = saved;
+
+  $("attrResultBlock").style.display = "none";
+  $("attrStatus").textContent = "";
+  $("attrStatus").className = "status";
+  $("attrModalTitle").textContent = hasSpeakers(it) ? "Re-attribute speakers" : "Attribute speakers";
+  $("attrModal").style.display = "";
+}
+
+function closeAttributeModal() {
+  $("attrModal").style.display = "none";
+  attrCurrentItem = null;
+  attrPendingResult = null;
+}
+
+function addAttrSpeakerRow(s) {
+  const row = document.createElement("div");
+  row.className = "speaker-row";
+  const n = document.createElement("input");
+  n.type = "text"; n.placeholder = "Name (e.g. Alice)"; n.value = s.name || "";
+  const d = document.createElement("input");
+  d.type = "text"; d.placeholder = "Role / description (optional)"; d.value = s.description || "";
+  const rm = document.createElement("button");
+  rm.type = "button"; rm.textContent = "Remove"; rm.className = "remove";
+  rm.addEventListener("click", () => row.remove());
+  row.appendChild(n); row.appendChild(d); row.appendChild(rm);
+  $("attrSpeakerRows").appendChild(row);
+}
+
+function collectAttrSpeakers() {
+  return Array.from($("attrSpeakerRows").children).map(r => {
+    const [n, d] = r.querySelectorAll("input");
+    return { name: (n.value || "").trim(), description: (d.value || "").trim() };
+  }).filter(s => s.name);
+}
+
+function setAttrStatus(msg, kind) {
+  const el = $("attrStatus");
+  el.textContent = msg;
+  el.className = "status" + (kind ? ` ${kind}` : "");
+}
+
+async function submitAttribution() {
+  if (!attrCurrentItem) return;
+  const speakers = collectAttrSpeakers();
+  localStorage.setItem(ATTR_SPEAKERS_KEY, JSON.stringify(speakers));
+  const model = $("attrModelInput").value;
+  if (model) localStorage.setItem(ATTR_MODEL_KEY, model);
+
+  setAttrStatus("Submitting...");
+  $("attrSubmitBtn").disabled = true;
+  $("attrResultBlock").style.display = "none";
+
+  try {
+    const res = await fetch("/api/attribute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        segments: attrCurrentItem.segments.map(s => ({ start: s.start, end: s.end, text: s.text })),
+        speakers,
+        model,
+      }),
+    });
+    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        let p;
+        try { p = JSON.parse(line.slice(6)); } catch { continue; }
+        if (p.status === "attributing") {
+          setAttrStatus(`Calling ${p.model} on ${p.segmentCount} segments...`);
+        } else if (p.status === "result") {
+          attrPendingResult = {
+            segments: p.segments,
+            speakers: p.speakers,
+            ambiguous: Array.isArray(p.ambiguous) ? p.ambiguous : [],
+            notes: typeof p.notes === "string" ? p.notes : "",
+            model: p.model,
+          };
+          if (p.warning) setAttrStatus(p.warning, "warn");
+          else setAttrStatus("Done.");
+          renderAttrResult(attrPendingResult);
+        } else if (p.status === "error") {
+          throw new Error(p.error);
+        }
+      }
+    }
+  } catch (e) {
+    setAttrStatus((e && e.message) || String(e), "error");
+  } finally {
+    $("attrSubmitBtn").disabled = false;
+  }
+}
+
+function renderAttrResult(result) {
+  const notesEl = $("attrResultNotes");
+  if (result.notes && result.notes.trim()) {
+    notesEl.textContent = result.notes.trim();
+    notesEl.style.display = "";
+  } else {
+    notesEl.style.display = "none";
+  }
+
+  const ambSet = new Set(result.ambiguous || []);
+  const summaryEl = $("attrAmbiguousSummary");
+  if (ambSet.size > 0) {
+    summaryEl.textContent = `Model flagged ${ambSet.size} segment${ambSet.size === 1 ? "" : "s"} as uncertain — see highlighted lines below. Edit the roster and re-run to refine.`;
+    summaryEl.style.display = "";
+  } else {
+    summaryEl.style.display = "none";
+  }
+
+  const wrap = $("attrResultPreview");
+  wrap.innerHTML = "";
+  const known = [];
+  for (const s of result.segments) {
+    if (s.speaker && !known.includes(s.speaker)) known.push(s.speaker);
+  }
+  let cur = null;
+  const flush = () => {
+    if (!cur) return;
+    const p = document.createElement("p");
+    p.className = "speaker-line" + (cur.ambiguous ? " ambiguous" : "");
+    const tag = document.createElement("span");
+    const idx = known.indexOf(cur.speaker);
+    tag.className = `speaker-tag s${(idx >= 0 ? idx : 0) % 6}`;
+    tag.textContent = cur.speaker + (cur.ambiguous ? " ?" : "");
+    p.appendChild(tag);
+    p.appendChild(document.createTextNode(cur.text.trim()));
+    wrap.appendChild(p);
+  };
+  result.segments.forEach((seg, i) => {
+    const sp = seg.speaker || "SPEAKER_??";
+    const isAmb = ambSet.has(i);
+    if (!cur || cur.speaker !== sp) {
+      flush();
+      cur = { speaker: sp, text: (seg.text || "").trim(), ambiguous: isAmb };
+    } else {
+      cur.text += " " + (seg.text || "").trim();
+      if (isAmb) cur.ambiguous = true;
+    }
+  });
+  flush();
+  $("attrResultBlock").style.display = "";
+}
+
+function saveAttributedEntry() {
+  if (!attrCurrentItem || !attrPendingResult) return;
+  const original = attrCurrentItem;
+  const items = loadHistory();
+  const idx = items.findIndex(x => x.id === original.id);
+  const baseTitle = original.title || original.sourceFilename || "Transcription";
+  const entry = {
+    ...original,
+    id: "attr-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+    createdAt: Date.now(),
+    segments: attrPendingResult.segments,
+    speakers: attrPendingResult.speakers,
+    ambiguous: attrPendingResult.ambiguous || [],
+    attributionNotes: attrPendingResult.notes || "",
+    title: `${baseTitle} (attributed)`,
+    attributedFrom: original.id,
+    attributedModel: attrPendingResult.model,
+  };
+  if (idx >= 0) items.splice(idx, 0, entry);
+  else items.unshift(entry);
+  writeHistory(items);
+  closeAttributeModal();
+  renderHistory();
+}
+
+// Wire modal buttons once on load
+$("attrModalClose").addEventListener("click", closeAttributeModal);
+$("attrModalBackdrop").addEventListener("click", closeAttributeModal);
+$("attrCancelBtn").addEventListener("click", closeAttributeModal);
+$("attrAddSpeakerBtn").addEventListener("click", () => addAttrSpeakerRow({ name: "", description: "" }));
+$("attrSubmitBtn").addEventListener("click", submitAttribution);
+$("attrDiscardBtn").addEventListener("click", () => { $("attrResultBlock").style.display = "none"; attrPendingResult = null; });
+$("attrSaveBtn").addEventListener("click", saveAttributedEntry);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("attrModal").style.display !== "none") closeAttributeModal();
+});
 
 async function downloadBatchZip(batchId) {
   const items = loadHistory().filter(it => it.batchId === batchId);

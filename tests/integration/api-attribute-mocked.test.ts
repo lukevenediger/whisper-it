@@ -6,7 +6,6 @@ import { app } from "../../src/app";
 
 const OPENROUTER = "https://openrouter.ai/api/v1/chat/completions";
 
-// Force the server-side handler to think a key is configured
 const ORIGINAL_KEY = process.env.OPENROUTER_API_KEY;
 beforeAll(() => {
   process.env.OPENROUTER_API_KEY = "sk-or-test";
@@ -39,7 +38,7 @@ const baseSegments = [
 ];
 
 describe("POST /api/attribute (mocked OpenRouter)", () => {
-  it("returns error when no key and no byok", async () => {
+  it("returns error when server has no key", async () => {
     delete process.env.OPENROUTER_API_KEY;
     const events = await callAttribute({ segments: baseSegments });
     expect(events[0]).toMatchObject({ status: "error", error: expect.stringMatching(/key/i) });
@@ -72,7 +71,6 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     const events = await callAttribute({
       segments: baseSegments,
       speakers: [{ name: "Alice" }, { name: "Bob" }],
-      speakerCount: 2,
     });
     const result = events.find((e) => e.status === "result");
     expect(result).toBeDefined();
@@ -83,12 +81,34 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     expect(result.warning).toBeNull();
   });
 
-  it("includes speakerCount + extraContext in the upstream prompt", async () => {
-    let seenUser = "";
+  it("empty roster ⇒ prompt tells model to guess and label Speaker 1/2/...", async () => {
+    let seenSystem = "";
     server.use(
       http.post(OPENROUTER, async ({ request }) => {
         const body = (await request.json()) as any;
-        seenUser = body?.messages?.find((m: any) => m.role === "user")?.content || "";
+        seenSystem = body?.messages?.find((m: any) => m.role === "system")?.content || "";
+        return HttpResponse.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ assignments: { "0": "Speaker 1", "1": "Speaker 2" } }),
+              },
+            },
+          ],
+        });
+      }),
+    );
+    await callAttribute({ segments: baseSegments, speakers: [] });
+    expect(seenSystem).toContain("infer how many distinct speakers");
+    expect(seenSystem).toContain('"Speaker 1"');
+  });
+
+  it("roster provided ⇒ prompt locks to roster names", async () => {
+    let seenSystem = "";
+    server.use(
+      http.post(OPENROUTER, async ({ request }) => {
+        const body = (await request.json()) as any;
+        seenSystem = body?.messages?.find((m: any) => m.role === "system")?.content || "";
         return HttpResponse.json({
           choices: [
             { message: { content: JSON.stringify({ assignments: { "0": "A", "1": "B" } }) } },
@@ -98,15 +118,12 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     );
     await callAttribute({
       segments: baseSegments,
-      speakers: [],
-      speakerCount: 3,
-      extraContext: "Alice runs product. Bob runs eng.",
+      speakers: [{ name: "Alice" }, { name: "Bob" }],
     });
-    expect(seenUser).toContain("Expected speaker count: 3");
-    expect(seenUser).toContain("Alice runs product");
+    expect(seenSystem).toContain("ONLY speaker names from the roster");
   });
 
-  it("attributing event reports the configured speaker count", async () => {
+  it("attributing event reports rosterSize + segmentCount + model", async () => {
     server.use(
       http.post(OPENROUTER, () =>
         HttpResponse.json({
@@ -114,11 +131,15 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
         }),
       ),
     );
-    const events = await callAttribute({ segments: baseSegments, speakers: [], speakerCount: 2 });
+    const events = await callAttribute({
+      segments: baseSegments,
+      speakers: [{ name: "Alice" }, { name: "Bob" }],
+      model: "qwen/qwen3.5-flash-02-23",
+    });
     const attributing = events.find((e) => e.status === "attributing");
-    expect(attributing.speakerCount).toBe(2);
-    const events2 = await callAttribute({ segments: baseSegments, speakers: [] });
-    expect(events2.find((e) => e.status === "attributing").speakerCount).toBe("auto");
+    expect(attributing.rosterSize).toBe(2);
+    expect(attributing.segmentCount).toBe(2);
+    expect(attributing.model).toBe("qwen/qwen3.5-flash-02-23");
   });
 
   it("handles markdown-fenced JSON", async () => {
@@ -141,7 +162,7 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     expect(result.segments.map((s: any) => s.speaker)).toEqual(["X", "Y"]);
   });
 
-  it("falls back to SPEAKER_NN on prose output + flags all ambiguous", async () => {
+  it("falls back to 'Speaker N' labels on prose output + flags all ambiguous", async () => {
     server.use(
       http.post(OPENROUTER, () =>
         HttpResponse.json({
@@ -152,7 +173,7 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     const events = await callAttribute({ segments: baseSegments, speakers: [] });
     const result = events.find((e) => e.status === "result");
     expect(result.warning).toMatch(/unparseable/i);
-    expect(result.segments.map((s: any) => s.speaker)).toEqual(["SPEAKER_00", "SPEAKER_01"]);
+    expect(result.segments.map((s: any) => s.speaker)).toEqual(["Speaker 1", "Speaker 2"]);
     expect(result.ambiguous).toEqual([0, 1]);
   });
 
@@ -170,24 +191,5 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     const err = events.find((e) => e.status === "error");
     expect(err).toBeDefined();
     expect(err.error).toMatch(/request failed|fetch/i);
-  });
-
-  it("uses BYOK over server key when both provided", async () => {
-    let seenAuth = "";
-    server.use(
-      http.post(OPENROUTER, ({ request }) => {
-        seenAuth = request.headers.get("authorization") || "";
-        return HttpResponse.json({
-          choices: [{ message: { content: '{"assignments":{"0":"A","1":"A"}}' } }],
-        });
-      }),
-    );
-    await callAttribute({
-      segments: baseSegments,
-      speakers: [],
-      byokKey: "sk-or-byok-secret",
-    });
-    expect(seenAuth).toContain("sk-or-byok-secret");
-    expect(seenAuth).not.toContain("sk-or-test");
   });
 });

@@ -323,10 +323,7 @@ app.post("/api/attribute", async (req, res) => {
   const body = req.body as {
     segments?: AttrSegment[];
     speakers?: AttrSpeaker[];
-    speakerCount?: number | "auto";
-    extraContext?: string;
     model?: string;
-    byokKey?: string;
   };
 
   res.writeHead(200, {
@@ -361,35 +358,20 @@ app.post("/api/attribute", async (req, res) => {
 
   const model =
     typeof body.model === "string" && body.model.trim() ? body.model.trim() : ATTR_DEFAULT_MODEL;
-  const serverKey = (process.env.OPENROUTER_API_KEY || "").trim();
-  const byok = (typeof body.byokKey === "string" ? body.byokKey : "").trim();
-  const apiKey = byok || serverKey;
+  const apiKey = (process.env.OPENROUTER_API_KEY || "").trim();
   if (!apiKey)
     return fail(
-      "No OpenRouter API key available. Provide one via the form or set OPENROUTER_API_KEY on the server.",
+      "Speaker attribution is unavailable — server has no OPENROUTER_API_KEY configured.",
     );
-
-  const speakerCount =
-    typeof body.speakerCount === "number" && body.speakerCount > 0
-      ? Math.floor(body.speakerCount)
-      : "auto";
-  const extraContext =
-    typeof body.extraContext === "string" ? body.extraContext.slice(0, 4000) : "";
 
   send({
     status: "attributing",
     model,
-    speakerCount,
     rosterSize: speakers.length,
     segmentCount: segments.length,
   });
 
-  const { system, user } = buildAttributionPrompt({
-    segments,
-    speakers,
-    speakerCount,
-    extraContext,
-  });
+  const { system, user } = buildAttributionPrompt({ segments, speakers });
 
   let openrouterRes: Response;
   try {

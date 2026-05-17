@@ -2,56 +2,54 @@ export type AttrSegment = { start: number; end: number; text: string };
 export type AttrSpeaker = { name: string; description?: string };
 
 export const ATTR_MAX_SEGMENTS = 600;
-export const ATTR_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
+export const ATTR_DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+
+/** Curated options surfaced in the attribute modal dropdown. Server still accepts any string. */
+export const ATTR_MODEL_OPTIONS = [
+  "deepseek/deepseek-v4-flash",
+  "qwen/qwen3.5-flash-02-23",
+  "google/gemma-4-31b-it",
+  "google/gemma-4-26b-a4b-it",
+] as const;
 
 export type AttrPromptInput = {
   segments: AttrSegment[];
+  /** Optional roster of named speakers. If empty, the model is asked to guess speaker count and use "Speaker 1", "Speaker 2", ... labels. */
   speakers: AttrSpeaker[];
-  /** Expected number of distinct speakers. Pass `undefined` (or "auto") to let the model decide. */
-  speakerCount?: number | "auto";
-  /** Optional extra hints from earlier iterations: free-form context the user supplies on refinement. */
-  extraContext?: string;
 };
 
 export function buildAttributionPrompt(input: AttrPromptInput): { system: string; user: string } {
-  const { segments, speakers, speakerCount, extraContext } = input;
+  const { segments, speakers } = input;
+  const hasRoster = speakers.length > 0;
 
-  const roster =
-    speakers.length > 0
-      ? speakers
-          .map((s, i) => `${i + 1}. ${s.name}${s.description ? ` — ${s.description}` : ""}`)
-          .join("\n")
-      : '(none provided — invent stable labels like "Speaker A", "Speaker B")';
+  const roster = hasRoster
+    ? speakers
+        .map((s, i) => `${i + 1}. ${s.name}${s.description ? ` — ${s.description}` : ""}`)
+        .join("\n")
+    : "(no roster provided)";
 
   const seg = segments
     .map((s, i) => `[${i}] ${s.start.toFixed(1)}-${s.end.toFixed(1)}s: ${s.text}`)
     .join("\n");
 
-  const countLine =
-    typeof speakerCount === "number" && speakerCount > 0
-      ? `Expected speaker count: ${speakerCount}. Do not invent more or fewer distinct speakers.`
-      : "Expected speaker count: auto-detect from the dialogue.";
-
-  const contextBlock =
-    extraContext && extraContext.trim()
-      ? `\n\nExtra context from the user:\n${extraContext.trim()}`
-      : "";
+  const labellingRule = hasRoster
+    ? "Use ONLY speaker names from the roster above. Be consistent: reuse the same name for the same person across segments."
+    : 'There is no roster. First infer how many distinct speakers are talking from the dialogue, then label them "Speaker 1", "Speaker 2", "Speaker 3", ... in the order they first appear. Use those exact labels.';
 
   const system = [
     "You assign speakers to transcript segments.",
-    "Inputs: (1) a roster of known speakers with optional context, (2) the expected speaker count, (3) numbered transcript segments, (4) optional extra context from the user.",
-    'For each segment, decide which speaker is talking. Use semantic cues — names addressed ("Thanks Alice" → Bob is speaking), topical handoffs, style, and any roster context.',
+    "Inputs: (1) a roster of known speakers (possibly empty), (2) numbered transcript segments.",
+    'For each segment, decide which speaker is talking using semantic cues — names addressed ("Thanks Alice" → Bob is speaking), topical handoffs, style, and any roster context.',
+    labellingRule,
     "Return ONLY a JSON object of the form:",
     '{"assignments": {"0": "Name", "1": "Name", ...}, "ambiguous": [<segment_index>, ...], "notes": "<short paragraph or empty string>"}',
     "- `assignments` MUST cover every segment index as a string key.",
     "- `ambiguous` is the list of segment indices you were not confident about (could be empty).",
     "- `notes` is a short human-readable explanation of how you resolved hard cases or what context would have helped (or empty string).",
-    '- Use speaker names from the roster when provided. If no roster, invent stable labels like "Speaker A", "Speaker B".',
-    "- Be consistent: re-use the same name for the same person across segments.",
     "- No prose outside the JSON. No markdown fences. JSON only.",
   ].join(" ");
 
-  const user = `Speaker roster:\n${roster}\n\n${countLine}\n\nSegments:\n${seg}${contextBlock}\n\nReturn the JSON object now.`;
+  const user = `Speaker roster:\n${roster}\n\nSegments:\n${seg}\n\nReturn the JSON object now.`;
   return { system, user };
 }
 
@@ -94,7 +92,7 @@ export function applyAssignments(segments: AttrSegment[], raw: string): AttrResu
   if (!assignments || typeof assignments !== "object") {
     const merged = segments.map((s, i) => ({
       ...s,
-      speaker: `SPEAKER_${String(i % 2).padStart(2, "0")}`,
+      speaker: `Speaker ${(i % 2) + 1}`,
     }));
     const speakers = Array.from(new Set(merged.map((s) => s.speaker)));
     return {
