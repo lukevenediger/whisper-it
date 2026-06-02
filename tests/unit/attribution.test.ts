@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildAttributionPrompt,
   applyAssignments,
+  countAssignedKeys,
   ATTR_DEFAULT_MODEL,
 } from "../../src/lib/attribution";
 
@@ -136,5 +137,36 @@ describe("applyAssignments", () => {
 
   it("default model is deepseek-v4-flash", () => {
     expect(ATTR_DEFAULT_MODEL).toBe("deepseek/deepseek-v4-flash");
+  });
+});
+
+describe("countAssignedKeys", () => {
+  it("counts integer assignment keys in complete JSON", () => {
+    const raw = JSON.stringify({
+      assignments: { "0": "A", "1": "B", "2": "A" },
+      ambiguous: [1],
+      notes: "x",
+    });
+    expect(countAssignedKeys(raw)).toBe(3);
+  });
+
+  it("counts keys in partial / mid-stream JSON", () => {
+    const partial = '{"assignments": {"0": "Alice", "1": "Bob", "2": "Ali';
+    expect(countAssignedKeys(partial)).toBe(3);
+  });
+
+  it("ignores ambiguous array numbers and notes prose", () => {
+    const raw = '{"assignments": {"0": "A"}, "ambiguous": [1, 2, 3], "notes": "saw 5 things"}';
+    expect(countAssignedKeys(raw)).toBe(1);
+  });
+
+  it("counts each index once even if a key repeats", () => {
+    const raw = '{"assignments": {"0":"A","0":"A","1":"B"}}';
+    expect(countAssignedKeys(raw)).toBe(2);
+  });
+
+  it("returns 0 when no integer keys present yet", () => {
+    expect(countAssignedKeys('{"assignments": {')).toBe(0);
+    expect(countAssignedKeys("")).toBe(0);
   });
 });

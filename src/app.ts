@@ -15,6 +15,7 @@ import {
   ATTR_DEFAULT_MODEL,
   buildAttributionPrompt,
   applyAssignments,
+  countAssignedKeys,
 } from "./lib/attribution";
 
 export const DATA_DIR = process.env.WHISPER_DATA_DIR || path.join(os.tmpdir(), "whisper-it-data");
@@ -332,7 +333,13 @@ app.post("/api/attribute", async (req, res) => {
     Connection: "keep-alive",
   });
 
-  const send = (obj: any) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  let clientGone = false;
+  res.on("close", () => {
+    clientGone = true;
+  });
+  const send = (obj: any) => {
+    if (!clientGone) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
   const fail = (msg: string) => {
     send({ status: "error", error: msg });
     res.end();
@@ -391,6 +398,7 @@ app.post("/api/attribute", async (req, res) => {
         ],
         temperature: 0.1,
         response_format: { type: "json_object" },
+        stream: true,
       }),
     });
   } catch (e: any) {
@@ -405,13 +413,66 @@ app.post("/api/attribute", async (req, res) => {
     return fail(`OpenRouter ${openrouterRes.status}: ${errBody || openrouterRes.statusText}`);
   }
 
-  let payload: any;
-  try {
-    payload = await openrouterRes.json();
-  } catch (e: any) {
-    return fail(`OpenRouter returned non-JSON: ${e?.message || String(e)}`);
+  const startedAt = Date.now();
+  const total = segments.length;
+  const contentType = openrouterRes.headers.get("content-type") || "";
+  let content = "";
+
+  if (contentType.includes("text/event-stream") && openrouterRes.body) {
+    // Streamed completion: forward live progress as the model emits assignments.
+    let lastDone = -1;
+    const emitProgress = (force = false) => {
+      const done = Math.min(countAssignedKeys(content), total);
+      if (force || done !== lastDone) {
+        lastDone = done;
+        send({ status: "progress", done, total, elapsedMs: Date.now() - startedAt });
+      }
+    };
+    // Heartbeat keeps the connection alive (and the bar moving) during silent
+    // "thinking" gaps where the model emits no tokens for several seconds.
+    const heartbeat = setInterval(() => emitProgress(true), 4000);
+    emitProgress(true); // show the bar immediately at 0
+    try {
+      const reader = (openrouterRes.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith("data:")) continue; // skip ": OPENROUTER PROCESSING" keep-alives
+          const data = t.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          try {
+            const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string") content += delta;
+          } catch {
+            /* partial/non-JSON chunk — ignore */
+          }
+        }
+        emitProgress();
+      }
+      emitProgress(true);
+    } catch (e: any) {
+      clearInterval(heartbeat);
+      return fail(`OpenRouter stream failed: ${e?.message || String(e)}`);
+    }
+    clearInterval(heartbeat);
+  } else {
+    // Non-streaming (test mocks / providers that ignore `stream`): single JSON body.
+    let payload: any;
+    try {
+      payload = await openrouterRes.json();
+    } catch (e: any) {
+      return fail(`OpenRouter returned non-JSON: ${e?.message || String(e)}`);
+    }
+    content = payload?.choices?.[0]?.message?.content;
   }
-  const content = payload?.choices?.[0]?.message?.content;
+
   if (typeof content !== "string" || !content.trim()) {
     return fail("OpenRouter response missing message content");
   }

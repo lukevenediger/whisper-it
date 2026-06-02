@@ -177,6 +177,35 @@ describe("POST /api/attribute (mocked OpenRouter)", () => {
     expect(result.ambiguous).toEqual([0, 1]);
   });
 
+  it("emits progress events while streaming an SSE completion", async () => {
+    const chunk = (content: string) =>
+      `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`;
+    const sse =
+      [
+        chunk('{"assignments": {"0": "Alice", '),
+        chunk('"1": "Bob"}, '),
+        chunk('"ambiguous": [], "notes": "ok"}'),
+        "data: [DONE]",
+      ].join("\n\n") + "\n\n";
+    server.use(
+      http.post(
+        OPENROUTER,
+        () => new HttpResponse(sse, { headers: { "Content-Type": "text/event-stream" } }),
+      ),
+    );
+    const events = await callAttribute({
+      segments: baseSegments,
+      speakers: [{ name: "Alice" }, { name: "Bob" }],
+    });
+    const progress = events.filter((e) => e.status === "progress");
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.at(-1).total).toBe(2);
+    expect(Math.max(...progress.map((p) => p.done))).toBe(2);
+    const result = events.find((e) => e.status === "result");
+    expect(result.segments.map((s: any) => s.speaker)).toEqual(["Alice", "Bob"]);
+    expect(result.warning).toBeNull();
+  });
+
   it("propagates upstream 401", async () => {
     server.use(http.post(OPENROUTER, () => new HttpResponse("Invalid key", { status: 401 })));
     const events = await callAttribute({ segments: baseSegments, speakers: [] });
