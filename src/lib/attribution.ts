@@ -53,6 +53,23 @@ export function buildAttributionPrompt(input: AttrPromptInput): { system: string
   return { system, user };
 }
 
+/**
+ * Count how many segment assignments have appeared in a (possibly partial /
+ * mid-stream) JSON completion. Used to drive the live progress bar while the
+ * model streams its `{"assignments": {"0": "...", "1": "..."}}` object.
+ *
+ * Matches quoted integer keys (`"0":`) — segment indices only. The `ambiguous`
+ * array holds bare numbers and `notes` is prose, so neither inflates the count.
+ */
+export function countAssignedKeys(partial: string): number {
+  if (!partial) return 0;
+  const seen = new Set<string>();
+  const re = /"(\d+)"\s*:/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(partial)) !== null) seen.add(m[1]);
+  return seen.size;
+}
+
 export type AttrResult = {
   merged: any[];
   speakers: string[];

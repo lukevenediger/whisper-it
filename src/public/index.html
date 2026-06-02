@@ -462,6 +462,9 @@
         <button id="attrCancelBtn">Cancel</button>
       </div>
       <div class="status" id="attrStatus"></div>
+      <div class="progress-bar-container" id="attrProgressContainer">
+        <div class="progress-bar" id="attrProgressBar"></div>
+      </div>
 
       <div id="attrResultBlock" class="attr-result-block" style="display:none">
         <h3>Result</h3>
@@ -1682,9 +1685,13 @@ async function submitAttribution() {
   const model = $("attrModelInput").value;
   if (model) localStorage.setItem(ATTR_MODEL_KEY, model);
 
+  const attrProgressContainer = $("attrProgressContainer");
+  const attrProgressBar = $("attrProgressBar");
   setAttrStatus("Submitting...");
   $("attrSubmitBtn").disabled = true;
   $("attrResultBlock").style.display = "none";
+  attrProgressBar.style.width = "0%";
+  attrProgressContainer.classList.add("visible");
 
   try {
     const res = await fetch("/api/attribute", {
@@ -1713,6 +1720,17 @@ async function submitAttribution() {
         try { p = JSON.parse(line.slice(6)); } catch { continue; }
         if (p.status === "attributing") {
           setAttrStatus(`Calling ${p.model} on ${p.segmentCount} segments...`);
+        } else if (p.status === "progress") {
+          const total = p.total || 0;
+          const done = Math.min(p.done || 0, total);
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          attrProgressBar.style.width = pct + "%";
+          const secs = Math.round((p.elapsedMs || 0) / 1000);
+          if (total > 0 && done >= total) {
+            setAttrStatus(`Finalizing… · ${secs}s`);
+          } else {
+            setAttrStatus(`Attributing… ${done}/${total} segments · ${secs}s`);
+          }
         } else if (p.status === "result") {
           attrPendingResult = {
             segments: p.segments,
@@ -1732,6 +1750,7 @@ async function submitAttribution() {
   } catch (e) {
     setAttrStatus((e && e.message) || String(e), "error");
   } finally {
+    attrProgressContainer.classList.remove("visible");
     $("attrSubmitBtn").disabled = false;
   }
 }
