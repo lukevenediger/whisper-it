@@ -34,7 +34,7 @@ test("version endpoint returns expected fields", async ({ request }) => {
   const body = await res.json();
   expect(body).toMatchObject({
     commit: expect.any(String),
-    hasDiarize: expect.any(Boolean),
     hasServerKey: expect.any(Boolean),
+    hasDebugFixtures: expect.any(Boolean),
   });
 });

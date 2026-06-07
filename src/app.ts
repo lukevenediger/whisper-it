@@ -8,6 +8,7 @@ import archiver from "archiver";
 import { StatsStore } from "./stats";
 import { countWords } from "./lib/words";
 import { sanitizeZipName } from "./lib/sanitize";
+import { resolveEngine, PARAKEET_MODEL } from "./lib/engine";
 import {
   AttrSegment,
   AttrSpeaker,
@@ -47,7 +48,15 @@ export function startupSweep() {
   } catch {}
 }
 
-const VALID_MODELS = ["tiny", "base", "small", "medium", "large-v3"];
+const VALID_MODELS = ["parakeet-v3", "tiny", "base", "small", "medium", "large-v3"];
+
+// Whisper model used when a Parakeet request forces an unsupported language.
+const PARAKEET_FALLBACK_MODEL =
+  typeof process.env.WHISPER_PARAKEET_FALLBACK_MODEL === "string" &&
+  VALID_MODELS.includes(process.env.WHISPER_PARAKEET_FALLBACK_MODEL) &&
+  process.env.WHISPER_PARAKEET_FALLBACK_MODEL !== PARAKEET_MODEL
+    ? process.env.WHISPER_PARAKEET_FALLBACK_MODEL
+    : "small";
 const VALID_LANGUAGES = new Set([
   "auto",
   "en",
@@ -155,14 +164,19 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
     return;
   }
 
-  const model =
+  const requestedModel =
     typeof req.body.model === "string" && VALID_MODELS.includes(req.body.model)
       ? req.body.model
-      : "small";
+      : PARAKEET_MODEL;
 
   const rawLang =
     typeof req.body.language === "string" ? req.body.language.toLowerCase().trim() : "";
   const language = rawLang && VALID_LANGUAGES.has(rawLang) ? rawLang : "auto";
+
+  // Route to the right engine. A Parakeet request with a forced, unsupported
+  // language transparently downgrades to a Whisper model (surfaced via SSE below).
+  const resolution = resolveEngine(requestedModel, language, PARAKEET_FALLBACK_MODEL);
+  const model = resolution.model;
 
   const fromRecording = req.body.fromRecording === "true" || req.body.fromRecording === true;
   const originalFilename =
@@ -178,6 +192,10 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
+
+  if (resolution.fallback) {
+    res.write(`data: ${JSON.stringify({ status: "fallback", ...resolution.fallback })}\n\n`);
+  }
 
   const scriptPath = path.join(__dirname, "..", "transcribe.py");
   const pyArgs = [scriptPath, "--model", model, "--file", tmpPath];

@@ -326,12 +326,17 @@
   <div class="vanity" id="vanity"></div>
 
   <div class="controls">
-    <select id="model" title="Whisper model">
-      <option value="tiny">tiny (~75MB)</option>
-      <option value="base">base (~140MB)</option>
-      <option value="small" selected>small (~460MB)</option>
-      <option value="medium">medium (~1.5GB)</option>
-      <option value="large-v3">large-v3 (~3GB)</option>
+    <select id="model" title="Transcription model">
+      <optgroup label="Parakeet (multilingual, fast)">
+        <option value="parakeet-v3" selected>parakeet-v3 (~670MB)</option>
+      </optgroup>
+      <optgroup label="Whisper">
+        <option value="tiny">tiny (~75MB)</option>
+        <option value="base">base (~140MB)</option>
+        <option value="small">small (~460MB)</option>
+        <option value="medium">medium (~1.5GB)</option>
+        <option value="large-v3">large-v3 (~3GB)</option>
+      </optgroup>
     </select>
     <select id="language" title="Force a language (or auto-detect)">
       <option value="auto" selected>Auto-detect</option>
@@ -586,7 +591,7 @@ let currentTranscribingItem = null;
 const ORIG_TITLE = document.title;
 
 // Approximate audio-seconds processed per wall-second by model (CPU int8, cpu_threads=2)
-const MODEL_SPEED = { tiny: 18, base: 10, small: 5, medium: 2.2, "large-v3": 1.2 };
+const MODEL_SPEED = { "parakeet-v3": 6, tiny: 18, base: 10, small: 5, medium: 2.2, "large-v3": 1.2 };
 
 function fmtEta(sec) {
   if (sec == null || !isFinite(sec) || sec <= 0) return "";
@@ -1073,6 +1078,8 @@ function countWords(text) {
 
 async function doTranscribe(modelOverride, meta) {
   const modelToUse = modelOverride || modelSelect.value;
+  // The model the server actually runs; may change if Parakeet falls back to Whisper.
+  let effectiveModel = modelToUse;
   if (!currentFile || isTranscribing) return false;
 
   // For re-transcribe (no meta), inherit from last result so title/batch carries forward
@@ -1150,7 +1157,7 @@ async function doTranscribe(modelOverride, meta) {
             item.progress = {
               phase: "chunking",
               audioDuration: payload.duration,
-              etaSec: estimateTotalSec(payload.duration, modelToUse),
+              etaSec: estimateTotalSec(payload.duration, effectiveModel),
               chunkTimings: [],
             };
             setTabTitle(`splitting · ${item.file.name}`);
@@ -1163,7 +1170,7 @@ async function doTranscribe(modelOverride, meta) {
             item.progress.phase = "chunked";
             item.progress.totalChunks = payload.total;
             item.progress.chunkSeconds = payload.chunk_seconds;
-            item.progress.etaSec = estimateTotalSec(item.progress.audioDuration, modelToUse);
+            item.progress.etaSec = estimateTotalSec(item.progress.audioDuration, effectiveModel);
             item.progress.chunkTimings = item.progress.chunkTimings || [];
             renderQueue();
           }
@@ -1201,6 +1208,15 @@ async function doTranscribe(modelOverride, meta) {
           } else {
             statusEl.textContent = "Transcribing...";
           }
+        } else if (payload.status === "fallback") {
+          // Parakeet can't serve the forced language; server switched to Whisper.
+          effectiveModel = payload.to || effectiveModel;
+          statusEl.textContent = `Language not supported by Parakeet — using Whisper ${payload.to}...`;
+          if (item) {
+            item.progress = item.progress || {};
+            item.progress.fallbackTo = payload.to;
+            renderQueue();
+          }
         } else if (payload.status === "result") {
           const words = countWords(payload.text);
           const createdAt = Date.now();
@@ -1208,21 +1224,21 @@ async function doTranscribe(modelOverride, meta) {
             text: payload.text, segments: payload.segments,
             speakers: payload.speakers || null,
             language: payload.language, duration: payload.duration,
-            model: modelToUse,
+            model: effectiveModel,
             sourceFilename: effMeta.sourceFilename,
             isRecording: !!effMeta.isRecording,
             batchId: effMeta.batchId || null,
             batchIndex: effMeta.batchIndex || null,
             batchSize: effMeta.batchSize || null,
           };
-          updateRetranscribeUI(modelToUse);
+          updateRetranscribeUI(effectiveModel);
           saveToHistory({
             id: newId(),
             createdAt,
             text: payload.text,
             language: payload.language,
             duration: payload.duration,
-            model: modelToUse,
+            model: effectiveModel,
             words,
             segments: payload.segments,
             speakers: payload.speakers || null,
@@ -1257,7 +1273,7 @@ async function doTranscribe(modelOverride, meta) {
 
 function updateRetranscribeUI(usedModel) {
   retranscribeModel.innerHTML = "";
-  const models = ["tiny", "base", "small", "medium", "large-v3"];
+  const models = ["parakeet-v3", "tiny", "base", "small", "medium", "large-v3"];
   for (const m of models) {
     if (m === usedModel) continue;
     const opt = document.createElement("option");
