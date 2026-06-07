@@ -23,8 +23,8 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Recordings auto-titled with date stamp** -- Mic recordings are saved as `Recording YYYY-MM-DD HH-MM-SS` and tagged with a Recording badge so you can tell them apart from uploaded files.
 - **Batch indicator** -- Items uploaded together share a `Batch · N of M` badge for easy grouping.
 - **Auto-transcribe** -- Transcription starts immediately when you finish recording or select files. No extra clicks.
-- **Multiple Whisper models** -- Choose from tiny (~75 MB), base (~140 MB), small (~460 MB), medium (~1.5 GB), or large-v3 (~3 GB). Default is small, which balances speed and accuracy well on CPU.
-- **Language selector** -- Force a specific language (English, Spanish, French, etc.) or leave on Auto-detect. Whisper sometimes hallucinates a wrong language during silent stretches; forcing one fixes that. Persists in localStorage.
+- **Parakeet v3 (default) + Whisper models** -- The default engine is NVIDIA's **Parakeet v3** (`parakeet-tdt-0.6b-v3`, ~670 MB) run on-device via [onnx-asr](https://github.com/istupakov/onnx-asr) — the same model the [Handy](https://github.com/cjpais/Handy) app uses, fast and accurate on CPU across 25 European languages. Whisper models (tiny ~75 MB, base ~140 MB, small ~460 MB, medium ~1.5 GB, large-v3 ~3 GB) remain selectable for everything else. No API keys, no HuggingFace login.
+- **Language selector** -- Force a specific language or leave on Auto-detect. Parakeet auto-detects across its 25 supported European languages; if you force a language Parakeet can't do (e.g. Japanese, Chinese, Arabic), the request transparently **falls back to a Whisper model** and a notice tells you so. Persists in localStorage.
 - **Long-audio chunking** -- Files longer than 20 minutes are auto-split via ffmpeg into 10-minute mono 16 kHz WAV chunks, transcribed sequentially with VAD silence-trim, and stitched back with original timestamps. Keeps memory bounded regardless of file length.
 - **Live ETA + tab-title progress** -- Long transcriptions show per-chunk progress and a refining ETA inside the queue panel; the browser tab title updates to `[N/total] · ETA` so you can leave the tab and check back.
 - **Re-transcribe** -- Not happy with the result? Pick a different model (or different language) and re-transcribe the same audio without re-uploading.
@@ -323,22 +323,24 @@ The frontend wires these into a dropdown + Run button on the main page so you ca
 
 ## Tuning & Environment Variables
 
-| Variable                      | Default   | Purpose                                                                                                                                                             |
-| ----------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                        | `4000`    | HTTP port the Express server listens on.                                                                                                                            |
-| `WHISPER_MODELS_DIR`          | `/models` | Where faster-whisper caches downloaded model weights.                                                                                                               |
-| `WHISPER_DATA_DIR`            | `/data`   | Where the server persists `stats.json`.                                                                                                                             |
-| `WHISPER_COMMIT`              | `dev`     | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer.                                                                |
-| `WHISPER_CPU_THREADS`         | `2`       | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                                                                               |
-| `WHISPER_NUM_WORKERS`         | `1`       | ctranslate2 worker count. Each worker = one set of scratch buffers.                                                                                                 |
-| `WHISPER_BEAM_SIZE`           | `5`       | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                                                                                   |
-| `WHISPER_CHUNK_THRESHOLD_SEC` | `1200`    | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                                                                                           |
-| `WHISPER_CHUNK_SECONDS`       | `600`     | Length of each chunk when chunking kicks in (default 10 minutes).                                                                                                   |
-| `OMP_NUM_THREADS`             | `2`       | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                                                                                   |
-| `MKL_NUM_THREADS`             | `2`       | MKL/BLAS thread cap.                                                                                                                                                |
-| `OPENBLAS_NUM_THREADS`        | `2`       | OpenBLAS thread cap.                                                                                                                                                |
-| `OPENROUTER_API_KEY`          | _(unset)_ | OpenRouter key for the Speaker Attribution feature. When unset, the `/api/attribute` endpoint returns a clear error and the Attribute modal flags it. Never logged. |
-| `WHISPER_DEBUG_FIXTURES`      | `0`       | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI for quick local testing. Off in production.                                         |
+| Variable                          | Default                     | Purpose                                                                                                                                                             |
+| --------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                            | `4000`                      | HTTP port the Express server listens on.                                                                                                                            |
+| `WHISPER_MODELS_DIR`              | `/models`                   | Where faster-whisper caches downloaded model weights. `HF_HOME` points here too, so onnx-asr's Parakeet + Silero VAD weights share the volume.                      |
+| `WHISPER_DATA_DIR`                | `/data`                     | Where the server persists `stats.json`.                                                                                                                             |
+| `WHISPER_PARAKEET_MODEL`          | `nemo-parakeet-tdt-0.6b-v3` | onnx-asr model id for the default Parakeet engine. Override to pin a different Parakeet build.                                                                      |
+| `WHISPER_PARAKEET_FALLBACK_MODEL` | `small`                     | Whisper model used when a Parakeet request forces a language outside Parakeet's 25 European languages.                                                              |
+| `WHISPER_COMMIT`                  | `dev`                       | Build-time commit hash, baked via `--build-arg COMMIT_HASH=…`. Drives `/api/version` and the footer.                                                                |
+| `WHISPER_CPU_THREADS`             | `2`                         | CPU threads passed to `faster_whisper.WhisperModel`. Higher = faster but more memory.                                                                               |
+| `WHISPER_NUM_WORKERS`             | `1`                         | ctranslate2 worker count. Each worker = one set of scratch buffers.                                                                                                 |
+| `WHISPER_BEAM_SIZE`               | `5`                         | Decoder beam size. Lower (e.g. `1`) cuts memory & latency at small accuracy cost.                                                                                   |
+| `WHISPER_CHUNK_THRESHOLD_SEC`     | `1200`                      | Audio longer than this triggers ffmpeg pre-chunking (default 20 minutes).                                                                                           |
+| `WHISPER_CHUNK_SECONDS`           | `600`                       | Length of each chunk when chunking kicks in (default 10 minutes).                                                                                                   |
+| `OMP_NUM_THREADS`                 | `2`                         | OpenMP thread cap. Mirrors `WHISPER_CPU_THREADS`.                                                                                                                   |
+| `MKL_NUM_THREADS`                 | `2`                         | MKL/BLAS thread cap.                                                                                                                                                |
+| `OPENBLAS_NUM_THREADS`            | `2`                         | OpenBLAS thread cap.                                                                                                                                                |
+| `OPENROUTER_API_KEY`              | _(unset)_                   | OpenRouter key for the Speaker Attribution feature. When unset, the `/api/attribute` endpoint returns a clear error and the Attribute modal flags it. Never logged. |
+| `WHISPER_DEBUG_FIXTURES`          | `0`                         | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI for quick local testing. Off in production.                                         |
 
 ### Memory & OOM
 

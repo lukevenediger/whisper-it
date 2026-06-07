@@ -5,10 +5,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Create Python venv and install faster-whisper
+# Create Python venv and install transcription engines:
+#   faster-whisper (CTranslate2) + onnx-asr (runs Parakeet v3 ONNX weights, CPU)
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir faster-whisper
+RUN pip install --no-cache-dir faster-whisper "onnx-asr[cpu,hub]"
 
 WORKDIR /app
 
@@ -30,6 +31,9 @@ RUN cp -r src/public dist/public
 ARG COMMIT_HASH=dev
 ENV WHISPER_COMMIT=$COMMIT_HASH
 ENV WHISPER_MODELS_DIR=/models
+# Route HuggingFace Hub cache (Parakeet + Silero VAD weights) into the same volume
+# faster-whisper uses, so onnx-asr downloads persist across restarts/rebuilds.
+ENV HF_HOME=/models
 ENV WHISPER_DATA_DIR=/data
 ENV PORT=4000
 # Cap CPU threads to keep peak memory bounded (ctranslate2 allocates per-thread scratch buffers)

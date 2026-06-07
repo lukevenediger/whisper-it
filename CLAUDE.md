@@ -53,9 +53,9 @@ make run
 - **Multi-file batch upload** -- Drop or pick multiple files; queued and transcribed sequentially with a live status list
 - **Auto-titled history** -- Uploads titled by filename; recordings titled `Recording YYYY-MM-DD HH-MM-SS`; batches show a `Batch · N of M` badge
 - **Auto-transcribe** -- Transcription starts immediately, no extra button clicks
-- **Model selection** -- Choose from tiny/base/small/medium/large-v3, default is small
-- **Language selector** -- Force a specific ISO 639-1 language code or leave on Auto-detect (handles silent-stretch hallucination); persists in localStorage
-- **Long-audio chunking** -- ffmpeg pre-splits audio > 20 min into 10-min mono 16 kHz WAV chunks; each chunk transcribed independently with VAD; timestamps offset back to original timeline
+- **Model selection** -- Default is **parakeet-v3** (NVIDIA Parakeet v3 via onnx-asr, on-device, 25 European languages); whisper tiny/base/small/medium/large-v3 selectable as alternates. Grouped dropdown (Parakeet / Whisper)
+- **Language selector** -- Force a specific ISO 639-1 language code or leave on Auto-detect (handles silent-stretch hallucination); persists in localStorage. Parakeet auto-detects its 25 languages; forcing a language outside that set auto-falls-back to a Whisper model (a `fallback` SSE event surfaces this in the UI)
+- **Long-audio chunking** -- ffmpeg pre-splits audio > 20 min into 10-min mono 16 kHz WAV chunks; each chunk transcribed independently (Whisper VAD, or Parakeet+Silero VAD); timestamps offset back to original timeline. Parakeet always runs through onnx-asr's Silero VAD (its window is ~20-30 s)
 - **Live ETA + tab title** -- Queue panel shows per-chunk progress + refining ETA; browser tab title updates to `[N/total] · ETA filename`
 - **Re-transcribe** -- Try a different model or language on the same audio without re-uploading
 - **Download progress** -- Live progress bar when a model is downloading for the first time
@@ -74,7 +74,7 @@ make run
 Single Docker container running:
 
 - **Node.js / Express** (TypeScript) backend -- serves static frontend + REST API
-- **Python / faster-whisper** -- called as a child process from Node for transcription
+- **Python transcription engines** -- called as a child process from Node. Two engines: **onnx-asr** (Parakeet v3, default) and **faster-whisper** (alternates). `app.ts` routes; `transcribe.py` picks the engine from the model name
 
 ```
 Browser  ->  Express (port 4000)  ->  python3 transcribe.py  ->  SSE stream
@@ -89,19 +89,20 @@ Transcription progress is streamed to the browser via Server-Sent Events (SSE). 
 ```
 whisper-it/
 ├── docker-compose.yml       # Single service, port 4000, model + data volumes, mem_limit 8g, env passthrough
-├── Dockerfile               # node:20-slim + Python 3 + faster-whisper, thread caps + commit ARG
+├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + onnx-asr[cpu,hub], HF_HOME=/models, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
-├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_DEBUG_FIXTURES
+├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_PARAKEET_* + WHISPER_DEBUG_FIXTURES
 ├── package.json             # Express, multer, archiver, TypeScript + test/lint deps
 ├── tsconfig.json
-├── transcribe.py            # Python: loads faster-whisper, transcribes, JSON out; cpu_threads/num_workers/beam_size from env
+├── transcribe.py            # Python: engine-agnostic chunk loop (run_chunked); Whisper (faster-whisper) + Parakeet (onnx-asr + Silero VAD) paths; JSON out
 ├── src/
 │   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen
-│   ├── app.ts               # Configured Express app: /api/transcribe (SSE) + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures, static. Exported for in-process supertest.
+│   ├── app.ts               # Configured Express app: /api/transcribe (SSE, routes engine via resolveEngine) + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures, static. Exported for in-process supertest.
 │   ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
 │   ├── lib/
 │   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / ambiguous + notes / fallback)
+│   │   ├── engine.ts        # resolveEngine(model, language) → engine + effective model; PARAKEET_LANGS (25 codes); Whisper fallback for unsupported langs
 │   │   ├── sanitize.ts      # sanitizeZipName
 │   │   └── words.ts         # countWords
 │   └── public/
@@ -127,7 +128,9 @@ whisper-it/
 
 ## Key Design Decisions
 
-- **faster-whisper** over vanilla whisper -- faster on CPU, lower memory via CTranslate2 int8 quantization
+- **Parakeet v3 via onnx-asr, not NeMo** -- The default engine is NVIDIA Parakeet v3 (`nemo-parakeet-tdt-0.6b-v3`), the same model the [Handy](https://github.com/cjpais/Handy) app uses. Handy runs it in Rust on ONNX Runtime (`transcribe-rs`); we consume the **same int8 ONNX weights** from Python via [`onnx-asr`](https://github.com/istupakov/onnx-asr) (deps: only `numpy` + `onnxruntime` — no PyTorch/NeMo). ~670 MB disk / ~2 GB RAM, CPU-only, CC-BY-4.0, no HF gating — fits the existing 8 GB container. NeMo was rejected: PyTorch dep tree, GPU-oriented. Parakeet's input window is ~20-30 s, so it **always** runs through onnx-asr's Silero VAD segmentation (not just for long audio).
+- **Whisper fallback for non-European languages** -- Parakeet covers 25 European languages and auto-detects (ignores manual hints). Forcing a language outside that set downgrades to a Whisper model (`resolveEngine` in `src/lib/engine.ts`), surfaced via a `fallback` SSE event. Keeps the full ~80-language capability while defaulting to the faster/multilingual engine.
+- **faster-whisper** over vanilla whisper -- faster on CPU, lower memory via CTranslate2 int8 quantization. Kept as the alternate engine + Parakeet fallback.
 - **Child process** approach -- Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user use.
 - **Single HTML file per page** -- all CSS/JS inline, no build step for frontend. Keeps it minimal.
 - **No auth** -- intended for use behind a VPN or reverse proxy that handles auth. Keeps the app simple.
@@ -144,8 +147,9 @@ whisper-it/
 ### POST /api/transcribe
 
 - **Content-Type:** multipart/form-data
-- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
-- **Response:** SSE stream with events: `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `result` (with text, segments, language, duration), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
+- **Fields:** `audio` (file, required), `model` (string, optional -- default "parakeet-v3"; also tiny/base/small/medium/large-v3), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
+- **Response:** SSE stream with events: `fallback` (Parakeet→Whisper language fallback only, with `from`/`to`/`reason`), `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `result` (with text, segments, language, duration), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
+- **Engine routing:** `app.ts` calls `resolveEngine`. `parakeet-v3` + a forced language outside its 25 → runs `WHISPER_PARAKEET_FALLBACK_MODEL` (default `small`) and emits `fallback`. Stats record the model that actually ran. Parakeet ignores the language hint (always auto-detects); its `result.language` is `""` (onnx-asr returns no detected code).
 - **Max file size:** 100MB
 - Audio file is deleted from disk immediately after the request completes.
 
@@ -178,20 +182,23 @@ Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, ha
 
 ## Tunable env
 
-| Var                                                            | Default   | Notes                                                                                                                                |
-| -------------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `PORT`                                                         | `4000`    | HTTP port                                                                                                                            |
-| `WHISPER_MODELS_DIR`                                           | `/models` | model weight cache                                                                                                                   |
-| `WHISPER_DATA_DIR`                                             | `/data`   | stats.json location                                                                                                                  |
-| `WHISPER_COMMIT`                                               | `dev`     | injected via build arg                                                                                                               |
-| `WHISPER_CPU_THREADS`                                          | `2`       | ctranslate2 cpu threads                                                                                                              |
-| `WHISPER_NUM_WORKERS`                                          | `1`       | ctranslate2 workers                                                                                                                  |
-| `WHISPER_BEAM_SIZE`                                            | `5`       | decoder beam                                                                                                                         |
-| `WHISPER_CHUNK_THRESHOLD_SEC`                                  | `1200`    | audio > N sec triggers ffmpeg chunking                                                                                               |
-| `WHISPER_CHUNK_SECONDS`                                        | `600`     | chunk length when chunking kicks in                                                                                                  |
-| `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2`       | BLAS thread caps                                                                                                                     |
-| `OPENROUTER_API_KEY`                                           | _(unset)_ | OpenRouter API key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged. |
-| `WHISPER_DEBUG_FIXTURES`                                       | `0`       | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI. Compose mounts the fixtures dir at `/fixtures:ro`.  |
+| Var                                                            | Default                     | Notes                                                                                                                                |
+| -------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `PORT`                                                         | `4000`                      | HTTP port                                                                                                                            |
+| `WHISPER_MODELS_DIR`                                           | `/models`                   | faster-whisper weight cache; `HF_HOME` also points here so onnx-asr (Parakeet + Silero VAD) shares the volume                        |
+| `HF_HOME`                                                      | `/models`                   | HuggingFace Hub cache dir (set in Dockerfile); keeps Parakeet/VAD downloads on the persistent volume                                 |
+| `WHISPER_PARAKEET_MODEL`                                       | `nemo-parakeet-tdt-0.6b-v3` | onnx-asr model id for the default Parakeet engine                                                                                    |
+| `WHISPER_PARAKEET_FALLBACK_MODEL`                              | `small`                     | Whisper model used when a Parakeet request forces a language outside Parakeet's 25                                                   |
+| `WHISPER_DATA_DIR`                                             | `/data`                     | stats.json location                                                                                                                  |
+| `WHISPER_COMMIT`                                               | `dev`                       | injected via build arg                                                                                                               |
+| `WHISPER_CPU_THREADS`                                          | `2`                         | ctranslate2 cpu threads                                                                                                              |
+| `WHISPER_NUM_WORKERS`                                          | `1`                         | ctranslate2 workers                                                                                                                  |
+| `WHISPER_BEAM_SIZE`                                            | `5`                         | decoder beam                                                                                                                         |
+| `WHISPER_CHUNK_THRESHOLD_SEC`                                  | `1200`                      | audio > N sec triggers ffmpeg chunking                                                                                               |
+| `WHISPER_CHUNK_SECONDS`                                        | `600`                       | chunk length when chunking kicks in                                                                                                  |
+| `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2`                         | BLAS thread caps                                                                                                                     |
+| `OPENROUTER_API_KEY`                                           | _(unset)_                   | OpenRouter API key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged. |
+| `WHISPER_DEBUG_FIXTURES`                                       | `0`                         | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI. Compose mounts the fixtures dir at `/fixtures:ro`.  |
 
 ## Development (without Docker)
 
