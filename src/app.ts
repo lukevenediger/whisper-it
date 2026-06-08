@@ -167,7 +167,7 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
   const requestedModel =
     typeof req.body.model === "string" && VALID_MODELS.includes(req.body.model)
       ? req.body.model
-      : PARAKEET_MODEL;
+      : "small";
 
   const rawLang =
     typeof req.body.language === "string" ? req.body.language.toLowerCase().trim() : "";

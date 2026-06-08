@@ -53,7 +53,7 @@ make run
 - **Multi-file batch upload** -- Drop or pick multiple files; queued and transcribed sequentially with a live status list
 - **Auto-titled history** -- Uploads titled by filename; recordings titled `Recording YYYY-MM-DD HH-MM-SS`; batches show a `Batch · N of M` badge
 - **Auto-transcribe** -- Transcription starts immediately, no extra button clicks
-- **Model selection** -- Default is **parakeet-v3** (NVIDIA Parakeet v3 via onnx-asr, on-device, 25 European languages); whisper tiny/base/small/medium/large-v3 selectable as alternates. Grouped dropdown (Parakeet / Whisper)
+- **Model selection** -- Default is whisper **small**; choose tiny/base/medium/large-v3, or **parakeet-v3** (NVIDIA Parakeet v3 via onnx-asr, on-device, 25 European languages). Grouped dropdown (Whisper / Parakeet). Choice persists in localStorage across reloads (`whisper-it-model`)
 - **Language selector** -- Force a specific ISO 639-1 language code or leave on Auto-detect (handles silent-stretch hallucination); persists in localStorage. Parakeet auto-detects its 25 languages; forcing a language outside that set auto-falls-back to a Whisper model (a `fallback` SSE event surfaces this in the UI)
 - **Long-audio chunking** -- ffmpeg pre-splits audio > 20 min into 10-min mono 16 kHz WAV chunks; each chunk transcribed independently (Whisper VAD, or Parakeet+Silero VAD); timestamps offset back to original timeline. Parakeet always runs through onnx-asr's Silero VAD (its window is ~20-30 s)
 - **Live ETA + tab title** -- Queue panel shows per-chunk progress + refining ETA; browser tab title updates to `[N/total] · ETA filename`
@@ -74,7 +74,7 @@ make run
 Single Docker container running:
 
 - **Node.js / Express** (TypeScript) backend -- serves static frontend + REST API
-- **Python transcription engines** -- called as a child process from Node. Two engines: **onnx-asr** (Parakeet v3, default) and **faster-whisper** (alternates). `app.ts` routes; `transcribe.py` picks the engine from the model name
+- **Python transcription engines** -- called as a child process from Node. Two engines: **faster-whisper** (default, whisper models) and **onnx-asr** (Parakeet v3, optional). `app.ts` routes; `transcribe.py` picks the engine from the model name
 
 ```
 Browser  ->  Express (port 4000)  ->  python3 transcribe.py  ->  SSE stream
@@ -128,8 +128,8 @@ whisper-it/
 
 ## Key Design Decisions
 
-- **Parakeet v3 via onnx-asr, not NeMo** -- The default engine is NVIDIA Parakeet v3 (`nemo-parakeet-tdt-0.6b-v3`), the same model the [Handy](https://github.com/cjpais/Handy) app uses. Handy runs it in Rust on ONNX Runtime (`transcribe-rs`); we consume the **same int8 ONNX weights** from Python via [`onnx-asr`](https://github.com/istupakov/onnx-asr) (deps: only `numpy` + `onnxruntime` — no PyTorch/NeMo). ~670 MB disk / ~2 GB RAM, CPU-only, CC-BY-4.0, no HF gating — fits the existing 8 GB container. NeMo was rejected: PyTorch dep tree, GPU-oriented. Parakeet's input window is ~20-30 s, so it **always** runs through onnx-asr's Silero VAD segmentation (not just for long audio).
-- **Whisper fallback for non-European languages** -- Parakeet covers 25 European languages and auto-detects (ignores manual hints). Forcing a language outside that set downgrades to a Whisper model (`resolveEngine` in `src/lib/engine.ts`), surfaced via a `fallback` SSE event. Keeps the full ~80-language capability while defaulting to the faster/multilingual engine.
+- **Parakeet v3 via onnx-asr, not NeMo** -- Parakeet v3 (`nemo-parakeet-tdt-0.6b-v3`) is offered as a selectable engine (default is whisper `small`). Same model the [Handy](https://github.com/cjpais/Handy) app uses. Handy runs it in Rust on ONNX Runtime (`transcribe-rs`); we consume the **same int8 ONNX weights** from Python via [`onnx-asr`](https://github.com/istupakov/onnx-asr) (deps: only `numpy` + `onnxruntime` — no PyTorch/NeMo). ~670 MB disk / ~2 GB RAM, CPU-only, CC-BY-4.0, no HF gating — fits the existing 8 GB container. NeMo was rejected: PyTorch dep tree, GPU-oriented. Parakeet's input window is ~20-30 s, so it **always** runs through onnx-asr's Silero VAD segmentation (not just for long audio).
+- **Whisper fallback for non-European languages** -- When the user picks Parakeet, it covers 25 European languages and auto-detects (ignores manual hints). Forcing a language outside that set downgrades to a Whisper model (`resolveEngine` in `src/lib/engine.ts`), surfaced via a `fallback` SSE event. Keeps the full ~80-language capability when Parakeet is selected.
 - **faster-whisper** over vanilla whisper -- faster on CPU, lower memory via CTranslate2 int8 quantization. Kept as the alternate engine + Parakeet fallback.
 - **Child process** approach -- Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user use.
 - **Single HTML file per page** -- all CSS/JS inline, no build step for frontend. Keeps it minimal.
@@ -147,7 +147,7 @@ whisper-it/
 ### POST /api/transcribe
 
 - **Content-Type:** multipart/form-data
-- **Fields:** `audio` (file, required), `model` (string, optional -- default "parakeet-v3"; also tiny/base/small/medium/large-v3), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
+- **Fields:** `audio` (file, required), `model` (string, optional -- default "small"; also tiny/base/medium/large-v3/parakeet-v3), `language` (string, optional -- ISO 639-1 or "auto", default "auto"), `filename` (string, optional), `fromRecording` (string "true"/"false", optional)
 - **Response:** SSE stream with events: `fallback` (Parakeet→Whisper language fallback only, with `from`/`to`/`reason`), `loading_model`, `downloading` (with progress %), `chunking` (long audio only, includes `duration`), `chunked` (long audio only, includes `total` + `chunk_seconds`), `transcribing` (with `chunk` + `total` for long audio), `result` (with text, segments, language, duration), `error` (with descriptive message; OOM is detected via SIGKILL / null exit code and reported with model name)
 - **Engine routing:** `app.ts` calls `resolveEngine`. `parakeet-v3` + a forced language outside its 25 → runs `WHISPER_PARAKEET_FALLBACK_MODEL` (default `small`) and emits `fallback`. Stats record the model that actually ran. Parakeet ignores the language hint (always auto-detects); its `result.language` is `""` (onnx-asr returns no detected code).
 - **Max file size:** 100MB
