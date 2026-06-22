@@ -141,7 +141,15 @@ const X_URL = "https://x.com/jumpdest7d";
 
 export const app = express();
 
-app.use(express.json({ limit: "20mb" }));
+app.use(
+  express.json({
+    limit: "20mb",
+    // Capture the raw body so the WhatsApp webhook route can verify WAHA's HMAC.
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+    },
+  }),
+);
 
 app.use((req, res, next) => {
   if (req.path === "/" || req.path.endsWith(".html")) {

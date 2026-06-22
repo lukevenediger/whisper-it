@@ -41,6 +41,9 @@ services:
       # Deliver inbound messages to whisper-it's webhook over the compose network.
       WHATSAPP_HOOK_URL: http://whisper-it:4000/api/whatsapp/webhook
       WHATSAPP_HOOK_EVENTS: message
+      # Sign webhooks with this key; whisper-it verifies it (set the same value as
+      # WHATSAPP_WEBHOOK_SECRET). Leave blank to disable signing.
+      WHATSAPP_HOOK_HMAC_KEY: ${WHATSAPP_WEBHOOK_SECRET:-}
       # NOWEB engine: no headless Chromium → ~300 MB instead of ~1-2 GB (WEBJS).
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       # Dashboard is reachable only inside the compose network; default creds are fine.

@@ -46,7 +46,14 @@ export function mountWhatsApp(app: Express, opts: MountOptions): boolean {
     fallbackModel: opts.fallbackModel,
   });
 
-  app.use("/api/whatsapp", createWebhookRouter(handle));
+  const webhookSecret = (process.env.WHATSAPP_WEBHOOK_SECRET || "").trim();
+  if (!webhookSecret) {
+    console.warn(
+      "[whatsapp] WHATSAPP_WEBHOOK_SECRET not set — webhooks are UNAUTHENTICATED. " +
+        "Set it (and WAHA's WHATSAPP_HOOK_HMAC_KEY to the same value) to enforce HMAC.",
+    );
+  }
+  app.use("/api/whatsapp", createWebhookRouter(handle, { secret: webhookSecret }));
   app.use("/api/whatsapp", createAdminRouter({ waha, whitelist, settings, senderStats }));
 
   // Best-effort: make sure the session exists/starts so the QR is available.
