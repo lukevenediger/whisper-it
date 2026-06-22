@@ -38,4 +38,22 @@ describe("WAHAClient.downloadMedia (SSRF hardening)", () => {
     const c = new WAHAClient("http://waha.test", "k");
     await expect(c.downloadMedia("not a url")).rejects.toThrow();
   });
+
+  it("does not follow a redirect off the WAHA host (no key leak via 30x)", async () => {
+    // If the download followed the redirect, it would hit evil.example.com with
+    // X-Api-Key attached; onUnhandledRequest:"error" would fail the test. With
+    // redirect:"manual" the 302 surfaces as a non-ok response and we reject.
+    server.use(
+      http.get(
+        "http://waha.test/api/files/r.ogg",
+        () =>
+          new HttpResponse(null, {
+            status: 302,
+            headers: { Location: "http://evil.example.com/leak" },
+          }),
+      ),
+    );
+    const c = new WAHAClient("http://waha.test", "secret-key");
+    await expect(c.downloadMedia("http://waha.test/api/files/r.ogg")).rejects.toThrow();
+  });
 });

@@ -82,7 +82,10 @@ export class WAHAClient implements WahaApi {
     // emitting localhost-based file URLs that don't resolve from this container.
     const parsed = new URL(url); // throws on a malformed URL → caller surfaces it
     const target = `${this.baseUrl}${parsed.pathname}${parsed.search}`;
-    const res = await fetch(target, { headers: this.headers() });
+    // redirect:"manual" so a 30x off the WAHA host can't carry the X-Api-Key to
+    // another origin (fetch preserves custom headers across redirects). A
+    // legitimate file response is a 200; any 3xx falls through to the throw.
+    const res = await fetch(target, { headers: this.headers(), redirect: "manual" });
     if (!res.ok) throw new Error(`media download failed: ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
