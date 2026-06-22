@@ -75,7 +75,14 @@ export class WAHAClient implements WahaApi {
   }
 
   async downloadMedia(url: string, mimetype?: string): Promise<string> {
-    const res = await fetch(url, { headers: this.headers() });
+    // SSRF / credential-leak guard: the media URL comes from the webhook payload,
+    // which is attacker-influenced until webhook signature verification lands
+    // (phase 2). Trust only the path — force the request onto the configured WAHA
+    // origin so the X-Api-Key is never sent anywhere but WAHA. Also fixes WAHA
+    // emitting localhost-based file URLs that don't resolve from this container.
+    const parsed = new URL(url); // throws on a malformed URL → caller surfaces it
+    const target = `${this.baseUrl}${parsed.pathname}${parsed.search}`;
+    const res = await fetch(target, { headers: this.headers() });
     if (!res.ok) throw new Error(`media download failed: ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });

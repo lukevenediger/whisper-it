@@ -229,7 +229,7 @@ make run
 
 - WAHA uses the lightweight **NOWEB** engine (no headless Chromium). Its session is persisted to the `waha-sessions` Docker volume, so you don't re-scan the QR after a restart.
 - To disable WhatsApp entirely, unset `WAHA_BASE_URL` (or don't start the `waha` service). The `/whatsapp.html` link is hidden when it's not configured.
-- **Security:** there is no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the deployment behind a VPN, as with the rest of the app. Prompt-injection hardening, webhook signature verification, and per-sender rate limits are a planned phase 2, not yet implemented.
+- **Security:** there is no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the deployment behind a VPN, as with the rest of the app. Media downloads are origin-pinned to the configured WAHA host, so the WAHA API key is never sent to a URL an attacker could inject via a webhook payload. Webhook signature verification (`WHATSAPP_WEBHOOK_SECRET`), prompt-injection hardening, and per-sender rate limits are a planned phase 2, not yet implemented.
 
 ## API
 
