@@ -47,6 +47,22 @@ make run
 - Empty roster: the prompt tells the model to guess speaker count and label them `Speaker 1`, `Speaker 2`, ...
 - Roster provided: the prompt locks the model to those names only.
 
+### Optional: enable WhatsApp transcription
+
+The bundled `waha` service connects a WhatsApp number. Bring it up, link the number, whitelist who can use it.
+
+```bash
+cp .env.example .env
+$EDITOR .env       # set WAHA_API_KEY (any string); WAHA_BASE_URL defaults to the bundled service
+make run
+```
+
+- Open `http://localhost:4000/whatsapp.html` → **Connection** shows the QR while status is `SCAN_QR_CODE` → scan it from WhatsApp → Settings → Linked Devices. Status flips to `WORKING`.
+- Add allowed numbers (international format, e.g. `27821234567`) in the **Whitelist** panel. Deny-by-default: until a number is listed, the bot ignores it.
+- Send/forward a voice note from a whitelisted number → reply with the transcript. Reply `diarize` (or `diarize Alice, Bob`) to label speakers — requires `OPENROUTER_API_KEY`.
+- To turn the feature off entirely, unset `WAHA_BASE_URL` (or don't run the `waha` service).
+- Security note: there's no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the whole thing behind a VPN. Prompt-injection / webhook-signature hardening is a deferred phase 2.
+
 ## Features
 
 - **Record or upload** -- Record from your mic (with live visualizer) or upload/drop one or more audio files
@@ -63,6 +79,7 @@ make run
 - **Save transcript .txt** -- Per-history-item Download button, named after source file
 - **Save batch .zip** -- Per-batch zip download (one .txt per source audio, named after source filename)
 - **Speaker attribution (opt-in, cloud)** -- Click **Attribute** on any history item to open a modal. Optionally list the speakers (leave blank to let the model guess and label them `Speaker 1`/`Speaker 2`/...), pick an OpenRouter model from the dropdown, submit. Ambiguous segments are highlighted in the result preview. Save promotes it to a new sibling history entry — the original is never overwritten.
+- **WhatsApp transcription (via WAHA)** -- Send or forward a voice note to a connected WhatsApp number and the bot replies with the transcription, reusing the full pipeline (model routing, chunking, fallback). A **deny-by-default whitelist** of numbers (UI-editable) gates access; everyone else is silently ignored. First-time senders get a welcome/help message; `help` shows it again. Reply **diarize** (or `diarize Alice, Bob`) after a transcript — or put the keyword in the voice-note caption — to get a speaker-labelled version (needs `OPENROUTER_API_KEY`). Admin page `/whatsapp.html` shows the QR + connection status, the whitelist editor, transcription defaults, and per-day / per-sender usage stats. Provided by the `waha` container in docker-compose; the app proxies the QR/status so the WAHA key never reaches the browser.
 - **Share** -- Uses OS-level share sheet (WhatsApp, Telegram, Messages, etc.) on supported browsers
 - **Mic selector** -- Pick which microphone to use when multiple are available
 - **Persistent stats** -- `/stats.html` shows total counts, audio duration, words, by-model/by-language breakdowns, last-30-days chart, longest item, recent activity. Persisted across restarts in the `whisper-data` volume.
@@ -88,26 +105,42 @@ Transcription progress is streamed to the browser via Server-Sent Events (SSE). 
 
 ```
 whisper-it/
-├── docker-compose.yml       # Single service, port 4000, model + data volumes, mem_limit 8g, env passthrough
+├── docker-compose.yml       # whisper-it + waha services, model/data/waha-sessions volumes, mem_limit, env passthrough
 ├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + onnx-asr[cpu,hub], HF_HOME=/models, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
-├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_PARAKEET_* + WHISPER_DEBUG_FIXTURES
+├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_PARAKEET_* + WAHA_* + WHISPER_DEBUG_FIXTURES
 ├── package.json             # Express, multer, archiver, TypeScript + test/lint deps
 ├── tsconfig.json
 ├── transcribe.py            # Python: engine-agnostic chunk loop (run_chunked); Whisper (faster-whisper) + Parakeet (onnx-asr + Silero VAD) paths; JSON out
 ├── src/
 │   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen
-│   ├── app.ts               # Configured Express app: /api/transcribe (SSE, routes engine via resolveEngine) + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures, static. Exported for in-process supertest.
+│   ├── app.ts               # Configured Express app: /api/transcribe + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures + mountWhatsApp(app), static. Exported for in-process supertest.
 │   ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
 │   ├── lib/
 │   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / ambiguous + notes / fallback)
+│   │   ├── attribute-core.ts # runAttribution(): non-route attribution core (OpenRouter call + applyAssignments). Shared by /api/attribute SSE route + WhatsApp handler.
+│   │   ├── transcribe-core.ts # runTranscription(): spawns transcribe.py, streams progress via onProgress, resolves result. describeFailure() classifies OOM/signal/exit. Shared by /api/transcribe SSE route + WhatsApp handler.
 │   │   ├── engine.ts        # resolveEngine(model, language) → engine + effective model; PARAKEET_LANGS (25 codes); Whisper fallback for unsupported langs
 │   │   ├── sanitize.ts      # sanitizeZipName
 │   │   └── words.ts         # countWords
+│   ├── whatsapp/            # WhatsApp transcription via WAHA (see Key Design Decisions)
+│   │   ├── index.ts         # mountWhatsApp(app, {dataDir}) — wires stores + WAHA client + handler + routers; isWhatsAppConfigured()
+│   │   ├── webhook.ts       # POST /api/whatsapp/webhook — parseWahaEvent() + acks-then-processes router (dedupes WAHA retries)
+│   │   ├── admin.ts         # Admin/proxy router: status/qr/session control + whitelist + settings + stats (keeps WAHA key server-side)
+│   │   ├── handler.ts       # Orchestration: whitelist → welcome → transcribe / interactive diarize / help. Consumes the cores non-SSE.
+│   │   ├── waha-client.ts   # WAHAClient: downloadMedia / sendText / seen+typing / session status / QR / restart / logout
+│   │   ├── command-parser.ts # parseCommand() (reply: diarize/diarise/help) + extractDiarize() (caption keyword + names)
+│   │   ├── whitelist-store.ts # WhitelistStore (deny-by-default) + normalizeNumber/jidToNumber; /data/whatsapp-whitelist.json
+│   │   ├── settings-store.ts # SettingsStore: default model/language/diarizeEnabled; /data/whatsapp-settings.json
+│   │   ├── sender-stats-store.ts # SenderStatsStore: per-day + per-sender counts + greeted flag; /data/whatsapp-stats.json
+│   │   ├── session-state.ts # SessionStore: in-memory TTL map (chatId → last transcript) for the interactive diarize flow
+│   │   ├── json-file.ts     # readJson / writeJsonAtomic (atomic-write helper shared by the WA stores)
+│   │   └── types.ts         # InboundMessage / FlowState / SenderSettings
 │   └── public/
-│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip / attribute modal
-│       └── stats.html       # Stats dashboard
+│       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip / attribute modal / WhatsApp nav link
+│       ├── stats.html       # Stats dashboard
+│       └── whatsapp.html    # WhatsApp admin: QR + connection status, number whitelist, defaults, per-sender usage
 ├── tests/
 │   ├── unit/                # vitest TS
 │   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container
@@ -129,6 +162,7 @@ whisper-it/
 ## Key Design Decisions
 
 - **Parakeet v3 via onnx-asr, not NeMo** -- Parakeet v3 (`nemo-parakeet-tdt-0.6b-v3`) is offered as a selectable engine (default is whisper `small`). Same model the [Handy](https://github.com/cjpais/Handy) app uses. Handy runs it in Rust on ONNX Runtime (`transcribe-rs`); we consume the **same int8 ONNX weights** from Python via [`onnx-asr`](https://github.com/istupakov/onnx-asr) (deps: only `numpy` + `onnxruntime` — no PyTorch/NeMo). ~670 MB disk / ~2 GB RAM, CPU-only, CC-BY-4.0, no HF gating — fits the existing 8 GB container. NeMo was rejected: PyTorch dep tree, GPU-oriented. Parakeet's input window is ~20-30 s, so it **always** runs through onnx-asr's Silero VAD segmentation (not just for long audio).
+- **WhatsApp via WAHA, bot logic in-process** -- The WhatsApp link is [WAHA](https://waha.devlike.pro) (WhatsApp HTTP API) running as a second compose container; WAHA Core (free) covers receiving voice notes, downloading media, and sending replies. The bot orchestration lives **inside the existing Node app** (`src/whatsapp/`), not a separate service, so it reuses the transcription/attribution pipeline directly. To make that reuse clean, the transcription + attribution orchestration was extracted from the Express SSE route closures into `src/lib/transcribe-core.ts` (`runTranscription`) and `src/lib/attribute-core.ts` (`runAttribution`); the browser SSE routes forward an `onProgress` callback, the WhatsApp handler `await`s the promise. WAHA uses the **NOWEB** engine (no headless Chromium → ~300 MB vs ~1-2 GB), with its session persisted to the `waha-sessions` volume so the QR isn't re-scanned on restart. WAHA's port is not published — only the app talks to it, proxying QR/status so the API key stays server-side. _Security (prompt-injection hardening, webhook HMAC, rate limits) is explicitly deferred to a phase 2._
 - **Whisper fallback for non-European languages** -- When the user picks Parakeet, it covers 25 European languages and auto-detects (ignores manual hints). Forcing a language outside that set downgrades to a Whisper model (`resolveEngine` in `src/lib/engine.ts`), surfaced via a `fallback` SSE event. Keeps the full ~80-language capability when Parakeet is selected.
 - **faster-whisper** over vanilla whisper -- faster on CPU, lower memory via CTranslate2 int8 quantization. Kept as the alternate engine + Parakeet fallback.
 - **Child process** approach -- Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user use.
@@ -178,7 +212,19 @@ Body `{files: [{name, text}], zipName}` → returns `application/zip` attachment
 
 ### GET /api/version
 
-Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, hasDebugFixtures}`. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; `hasDebugFixtures` reflects whether the debug fixtures dropdown is enabled. Client uses these to gate UI controls.
+Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, hasDebugFixtures, hasWhatsApp}`. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; `hasDebugFixtures` reflects whether the debug fixtures dropdown is enabled; `hasWhatsApp` reflects whether WAHA is configured (`WAHA_BASE_URL` set) — gates the WhatsApp admin-page link in the footer/nav. Client uses these to gate UI controls.
+
+### WhatsApp endpoints (mounted by `mountWhatsApp`, only when `WAHA_BASE_URL` is set)
+
+All under `/api/whatsapp`. No auth (intended to sit behind a VPN like the rest of the app).
+
+- `POST /webhook` — WAHA's inbound `message` hook. Acks `200` immediately, then processes asynchronously (so long transcriptions don't trip WAHA's retry timeout); dedupes repeated message ids. `parseWahaEvent` maps the WAHA payload → `InboundMessage`; the `handler` does whitelist → first-message welcome → transcribe → reply (and the interactive/caption diarize flow).
+- `GET /status` — proxies the WAHA session status (`STARTING|SCAN_QR_CODE|WORKING|FAILED`).
+- `GET /qr` — proxies the WAHA QR as base64 JSON (`204` when not in `SCAN_QR_CODE`). The WAHA API key never reaches the browser.
+- `POST /session/restart`, `POST /session/logout` — proxy WAHA session control (restart is create-or-start aware).
+- `GET /whitelist` / `PUT /whitelist` (`{numbers:[]}`) — read/replace the allow-list (deny-by-default; non-whitelisted senders are silently ignored).
+- `GET /settings` / `PUT /settings` — WhatsApp transcription defaults (`model`, `language`, `diarizeEnabled`).
+- `GET /stats` — per-day + per-sender usage for the admin dashboard.
 
 ## Tunable env
 
@@ -198,6 +244,11 @@ Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, ha
 | `WHISPER_CHUNK_SECONDS`                                        | `600`                       | chunk length when chunking kicks in                                                                                                  |
 | `OMP_NUM_THREADS` / `MKL_NUM_THREADS` / `OPENBLAS_NUM_THREADS` | `2`                         | BLAS thread caps                                                                                                                     |
 | `OPENROUTER_API_KEY`                                           | _(unset)_                   | OpenRouter API key for `/api/attribute` cloud attribution. Optional -- users can BYOK in the attribute screen instead. Never logged. |
+| `WAHA_BASE_URL`                                                | `http://waha:3000`          | How the app reaches the WAHA container. **Unset this to disable the WhatsApp feature** (`isWhatsAppConfigured()` is false).          |
+| `WAHA_API_KEY`                                                 | _(unset)_                   | Sent as `X-Api-Key` to WAHA. Must match the `waha` service's `WAHA_API_KEY`. Blank = no auth on the private compose network.         |
+| `WAHA_SESSION`                                                 | `default`                   | WAHA session name (one WhatsApp number per session).                                                                                |
+| `WHATSAPP_HOOK_URL`                                            | _(unset)_                   | Optional webhook URL passed to `ensureSession`. WAHA's own `WHATSAPP_HOOK_URL` env is the authoritative global hook.                 |
+| `WHATSAPP_WEBHOOK_SECRET`                                      | _(unset)_                   | Reserved for phase-2 webhook HMAC verification. Plumbed through compose but not enforced yet.                                        |
 | `WHISPER_DEBUG_FIXTURES`                                       | `0`                         | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI. Compose mounts the fixtures dir at `/fixtures:ro`.  |
 
 ## Development (without Docker)

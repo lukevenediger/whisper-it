@@ -34,6 +34,7 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Save transcript as file** -- Download any transcript as a `.txt` file, named after the source filename.
 - **Save batch as zip** -- For multi-file uploads, click the batch badge (or the per-item _Zip batch_ button) to download every transcript in the batch as a single zip — one `.txt` per audio file, named after the originals.
 - **Speaker attribution (opt-in)** -- Click _Attribute_ on any transcription to open a modal. Optionally list the speakers (name + short role description) and pick a model from the dropdown. Whisper It calls an LLM via OpenRouter and assigns a named speaker to every segment. Leave the roster blank and the model guesses how many speakers there are and labels them `Speaker 1`, `Speaker 2`, …; fill it in and the model is locked to those names. Ambiguous segments get a `?` chip + a yellow highlight, with a short note from the model on how it resolved hard cases. Save promotes the result to a new sibling history entry — the original is never overwritten. Server-side `OPENROUTER_API_KEY` only — no per-user key entry. Never inline with the basic transcribe flow.
+- **WhatsApp transcription** -- Connect a WhatsApp number (via the bundled [WAHA](https://waha.devlike.pro) container) and send or forward it voice notes — the bot replies with the transcription, using the same pipeline as the web app. A UI-editable, deny-by-default number **whitelist** controls access; everyone else is silently ignored. Reply `diarize` (or `diarize Alice, Bob`) to get a speaker-labelled version. The `/whatsapp.html` admin page shows the pairing QR + connection status, the whitelist, transcription defaults, and per-sender usage stats. See [WhatsApp Transcription](#whatsapp-transcription) below.
 - **Persistent stats page** -- A `/stats.html` dashboard shows total transcriptions, audio duration processed, words produced, model and language breakdowns, last-30-days activity chart, longest item, and recent activity. Stats persist across container restarts via a Docker volume.
 - **Share** -- Uses the OS-level share sheet (WhatsApp, Telegram, Messages, AirDrop, email, etc.) on supported browsers. Falls back to clipboard copy.
 - **Microphone selector** -- When multiple mics are detected, pick the right one from a row of buttons. Your choice is remembered across sessions.
@@ -191,6 +192,44 @@ make run
 ```
 
 Get a key at <https://openrouter.ai/keys>. The key never leaves the server — the browser never sees it.
+
+## WhatsApp Transcription
+
+Turn a WhatsApp number into a transcription bot: send or forward it a voice note, get the text back. It runs the same engine as the web app (model routing, long-audio chunking, Parakeet/Whisper fallback) and reuses the speaker-attribution feature for on-demand diarization.
+
+The WhatsApp link is provided by [**WAHA**](https://waha.devlike.pro) (WhatsApp HTTP API), which `docker-compose.yml` runs as a second container. WAHA Core (free) is all that's needed. The bot logic lives inside Whisper It; WAHA's port is not exposed to the host — the app proxies the QR and status so WAHA's API key never reaches the browser.
+
+### Setup
+
+```bash
+cp .env.example .env
+$EDITOR .env       # set WAHA_API_KEY to any string (shared between the two containers)
+make run
+```
+
+1. Open <http://localhost:4000/whatsapp.html>. The **Connection** card shows a QR code while the session status is `SCAN_QR_CODE`.
+2. On your phone: WhatsApp → **Settings → Linked Devices → Link a Device** → scan the QR. Status flips to `WORKING`.
+3. In the **Whitelist** panel, add the numbers allowed to use the bot, one per line, in international format (e.g. `27821234567`). It's **deny-by-default** — until a number is listed, the bot ignores it (no reply).
+4. Send or forward a voice note from a whitelisted number. The bot transcribes and replies, quoting your message.
+
+### Talking to the bot
+
+- **Voice note** → transcription reply (with a small footer: detected language · model · duration).
+- **`diarize`** (or **`diarise`**) as a reply to a transcript, or in the voice note's caption → speaker-labelled version. Add names to lock the roster: `diarize Alice, Bob`. Leave them off and the model guesses `Speaker 1`, `Speaker 2`, … Requires `OPENROUTER_API_KEY` (see [Speaker Attribution](#speaker-attribution)); the bot hides the option otherwise.
+- **`help`** → usage instructions. The same help is sent automatically the first time the bot sees a new sender.
+
+### Admin page (`/whatsapp.html`)
+
+- **Connection** — live status badge + QR, plus Restart and Log out.
+- **Whitelist** — add/remove allowed numbers.
+- **Settings** — default model, default language, and a toggle for offering diarization.
+- **Usage** — last-30-days chart + a per-sender table (count, audio, words, last seen).
+
+### Notes & limits
+
+- WAHA uses the lightweight **NOWEB** engine (no headless Chromium). Its session is persisted to the `waha-sessions` Docker volume, so you don't re-scan the QR after a restart.
+- To disable WhatsApp entirely, unset `WAHA_BASE_URL` (or don't start the `waha` service). The `/whatsapp.html` link is hidden when it's not configured.
+- **Security:** there is no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the deployment behind a VPN, as with the rest of the app. Prompt-injection hardening, webhook signature verification, and per-sender rate limits are a planned phase 2, not yet implemented.
 
 ## API
 
