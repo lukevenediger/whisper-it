@@ -232,6 +232,37 @@ make run
 - To disable WhatsApp entirely, unset `WAHA_BASE_URL` (or don't start the `waha` service). The `/whatsapp.html` link is hidden when it's not configured.
 - **Security:** there is no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the deployment behind a VPN, as with the rest of the app. Two hardening measures are in place: media downloads are origin-pinned to the configured WAHA host (the API key is never sent to a URL an attacker could inject via a webhook payload, and redirects aren't followed), and **webhook HMAC verification** — set `WHATSAPP_WEBHOOK_SECRET` and the app rejects any webhook without a valid signature (`401`), so forged webhooks can't reach the handler. Prompt-injection hardening and per-sender rate limits are a planned phase 2.
 
+### State & where it lives
+
+Three things persist, none of them in your browser:
+
+| What                                                   | Where                                               | Survives `make run` rebuild? | Moves with a `git clone`? |
+| ------------------------------------------------------ | --------------------------------------------------- | ---------------------------- | ------------------------- |
+| WhatsApp pairing (the linked device)                   | `waha-sessions` Docker volume                       | Yes                          | **No**                    |
+| Number whitelist + transcription defaults              | `whisper-data` volume (`/data/whatsapp-*.json`)     | Yes                          | **No**                    |
+| Per-sender usage stats                                 | `whisper-data` volume (`/data/whatsapp-stats.json`) | Yes                          | **No**                    |
+| Interactive `diarize` state (last transcript)          | in-memory only                                      | **No** (lost on restart)     | No                        |
+| Secrets (`WAHA_API_KEY`, `WHATSAPP_WEBHOOK_SECRET`, …) | `.env` (git-ignored)                                | Yes                          | **No**                    |
+
+### Moving to another machine
+
+Docker volumes and `.env` do **not** travel with the git repo. On the new machine after `git clone`:
+
+1. Recreate `.env` (`cp .env.example .env`, set `WAHA_API_KEY` and `WHATSAPP_WEBHOOK_SECRET` to the same values you used before — or new ones).
+2. `make run`.
+3. Re-link WhatsApp: open `/whatsapp.html`, scan the QR again (the old `waha-sessions` volume stayed on the old machine).
+4. Re-add the numbers to the **Whitelist** (it starts empty).
+
+That's it — nothing else is machine-specific. (To actually migrate the linked session + whitelist + stats instead of re-pairing, copy the Docker volumes: `docker run --rm -v whisper-it_waha-sessions:/v -v $PWD:/backup alpine tar czf /backup/waha-sessions.tgz -C /v .` on the old machine, and restore the tarball into the same-named volume on the new one. Re-pairing is simpler unless you care about history.)
+
+### Troubleshooting
+
+- **No QR on `/whatsapp.html`** — status must be `SCAN_QR_CODE`. If it's `STARTING`, wait a few seconds and the page re-polls. If `STOPPED`/`FAILED`, click **Restart session**. Confirm the `waha` container is up (`make logs` / `docker compose ps`).
+- **Webhook returns 401 / bot never replies** — `WHATSAPP_WEBHOOK_SECRET` (whisper-it) and `WHATSAPP_HOOK_HMAC_KEY` (waha) must be the **same** value. Compose wires both from `WHATSAPP_WEBHOOK_SECRET`, so set it once and `make run` again. The whisper-it logs warn at startup when the secret is unset (webhooks unauthenticated).
+- **Bot ignores a number** — it's not on the whitelist (deny-by-default), or it's a group chat (groups are ignored). Add the number in international format, digits only.
+- **`diarize` says it's unavailable** — needs `OPENROUTER_API_KEY` set and the **Settings → offer diarization** toggle on.
+- **Media download fails in logs** — the app only fetches media from the configured `WAHA_BASE_URL` host; if WAHA is emitting URLs the app can't reach, check `WAHA_BASE_URL` points at the `waha` service.
+
 ## API
 
 If you want to integrate with Whisper It programmatically:
