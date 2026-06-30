@@ -321,7 +321,10 @@
 <div class="container">
   <div class="topbar">
     <h1>Whisper It <span>local transcription</span></h1>
-    <a class="nav-link" href="/stats.html">Stats</a>
+    <div style="display:flex; gap:0.5rem;">
+      <a class="nav-link" id="waLink" href="/whatsapp.html" style="display:none">WhatsApp</a>
+      <a class="nav-link" href="/stats.html">Stats</a>
+    </div>
   </div>
   <div class="vanity" id="vanity"></div>
 
@@ -531,13 +534,18 @@ const savedLang = localStorage.getItem("whisper-it-language");
 if (savedLang) languageSelect.value = savedLang;
 languageSelect.addEventListener("change", () => localStorage.setItem("whisper-it-language", languageSelect.value));
 
-let serverCaps = { hasServerKey: false, hasDebugFixtures: false };
+let serverCaps = { hasServerKey: false, hasDebugFixtures: false, hasWhatsApp: false };
 fetch("/api/version").then(r => r.json()).then(v => {
   serverCaps = {
     hasServerKey: !!v.hasServerKey,
     hasDebugFixtures: !!v.hasDebugFixtures,
+    hasWhatsApp: !!v.hasWhatsApp,
   };
   if (serverCaps.hasDebugFixtures) setupDebugPanel();
+  if (serverCaps.hasWhatsApp) {
+    const waLink = document.getElementById("waLink");
+    if (waLink) waLink.style.display = "";
+  }
   // History may have rendered before this fetch resolved — re-render so capability-gated
   // controls (the Attribute button) appear on existing items.
   if (typeof renderHistory === "function") renderHistory();

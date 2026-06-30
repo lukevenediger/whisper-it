@@ -1,6 +1,5 @@
 import express from "express";
 import multer from "multer";
-import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -9,15 +8,10 @@ import { StatsStore } from "./stats";
 import { countWords } from "./lib/words";
 import { sanitizeZipName } from "./lib/sanitize";
 import { resolveEngine, PARAKEET_MODEL } from "./lib/engine";
-import {
-  AttrSegment,
-  AttrSpeaker,
-  ATTR_MAX_SEGMENTS,
-  ATTR_DEFAULT_MODEL,
-  buildAttributionPrompt,
-  applyAssignments,
-  countAssignedKeys,
-} from "./lib/attribution";
+import { AttrSegment, AttrSpeaker } from "./lib/attribution";
+import { runTranscription, TranscribeError, TranscribeAbortError } from "./lib/transcribe-core";
+import { runAttribution, AttributeError } from "./lib/attribute-core";
+import { mountWhatsApp, isWhatsAppConfigured } from "./whatsapp";
 
 export const DATA_DIR = process.env.WHISPER_DATA_DIR || path.join(os.tmpdir(), "whisper-it-data");
 
@@ -147,7 +141,15 @@ const X_URL = "https://x.com/jumpdest7d";
 
 export const app = express();
 
-app.use(express.json({ limit: "20mb" }));
+app.use(
+  express.json({
+    limit: "20mb",
+    // Capture the raw body so the WhatsApp webhook route can verify WAHA's HMAC.
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+    },
+  }),
+);
 
 app.use((req, res, next) => {
   if (req.path === "/" || req.path.endsWith(".html")) {
@@ -197,141 +199,71 @@ app.post("/api/transcribe", upload.single("audio"), (req, res) => {
     res.write(`data: ${JSON.stringify({ status: "fallback", ...resolution.fallback })}\n\n`);
   }
 
-  const scriptPath = path.join(__dirname, "..", "transcribe.py");
-  const pyArgs = [scriptPath, "--model", model, "--file", tmpPath];
-  if (language && language !== "auto") {
-    pyArgs.push("--language", language);
-  }
-  const proc: ChildProcess = spawn("python3", pyArgs);
-
-  let stdout = "";
-  let stderrBuf = "";
-  let stderrRaw = "";
   let cleaned = false;
-  let clientAborted = false;
-  let currentChild: ChildProcess | null = proc;
-
-  function cleanup() {
+  const cleanup = () => {
     if (!cleaned) {
       cleaned = true;
       fs.unlink(tmpPath, () => {});
     }
-  }
+  };
 
-  proc.stdout!.on("data", (data: Buffer) => {
-    stdout += data.toString();
-  });
-
-  proc.stderr!.on("data", (data: Buffer) => {
-    const chunk = data.toString();
-    stderrRaw += chunk;
-    stderrBuf += chunk;
-    const lines = stderrBuf.split("\n");
-    stderrBuf = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        res.write(`data: ${JSON.stringify(parsed)}\n\n`);
-      } catch {
-        console.error("[python stderr]", trimmed);
-      }
-    }
-  });
-
-  proc.on("close", (code, signal) => {
-    currentChild = null;
-    if (clientAborted) {
-      try {
-        res.end();
-      } catch {}
-      cleanup();
-      return;
-    }
-    if (code === 0) {
-      let result: any;
-      try {
-        result = JSON.parse(stdout);
-      } catch {
-        res.write(
-          `data: ${JSON.stringify({ status: "error", error: "Failed to parse transcription output" })}\n\n`,
-        );
-        res.end();
-        cleanup();
-        return;
-      }
-
-      const finalize = (finalResult: any) => {
-        res.write(`data: ${JSON.stringify({ status: "result", ...finalResult })}\n\n`);
-        try {
-          stats.record({
-            ts: Date.now(),
-            model,
-            language: finalResult.language || "",
-            durationSec: finalResult.duration || 0,
-            words: countWords(finalResult.text || ""),
-            audioBytes,
-            fromRecording,
-            filename: originalFilename,
-          });
-        } catch (err) {
-          console.error("Stats record failed:", err);
-        }
-        res.end();
-        cleanup();
-      };
-
-      finalize(result);
-      return;
-    } else {
-      const tail = stderrRaw
-        .split("\n")
-        .filter((l) => l.trim() && !l.trim().startsWith("{"))
-        .slice(-8)
-        .join("\n");
-      let reason: string;
-      if (signal === "SIGKILL" || (code === null && !signal)) {
-        reason = `Process killed (likely out of memory — try a smaller model, or increase Docker's memory allocation). Model: ${model}.`;
-      } else if (signal) {
-        reason = `Process terminated by signal ${signal}.`;
-      } else {
-        reason = tail.trim() || `exit code ${code}`;
-      }
-      console.error(
-        `[transcribe] failed (exit code=${code} signal=${signal || "none"}):\n${stderrRaw}`,
-      );
-      res.write(
-        `data: ${JSON.stringify({ status: "error", error: `Transcription failed: ${reason}` })}\n\n`,
-      );
-    }
-    res.end();
-    cleanup();
-  });
-
-  proc.on("error", (err) => {
-    console.error("Failed to start transcription process:", err);
-    res.write(
-      `data: ${JSON.stringify({ status: "error", error: "Failed to start transcription process" })}\n\n`,
-    );
-    res.end();
-    cleanup();
-  });
-
+  const ac = new AbortController();
+  let clientAborted = false;
   req.on("close", () => {
     if (res.writableEnded) {
       cleanup();
       return;
     }
     clientAborted = true;
-    if (currentChild && !currentChild.killed) {
-      try {
-        currentChild.kill();
-      } catch {}
-    }
+    ac.abort();
     cleanup();
   });
+
+  runTranscription({
+    model,
+    filePath: tmpPath,
+    language,
+    signal: ac.signal,
+    onProgress: (event) => res.write(`data: ${JSON.stringify(event)}\n\n`),
+  })
+    .then((result) => {
+      if (clientAborted) return;
+      res.write(`data: ${JSON.stringify({ status: "result", ...result })}\n\n`);
+      try {
+        stats.record({
+          ts: Date.now(),
+          model,
+          language: result.language || "",
+          durationSec: result.duration || 0,
+          words: countWords(result.text || ""),
+          audioBytes,
+          fromRecording,
+          filename: originalFilename,
+        });
+      } catch (err) {
+        console.error("Stats record failed:", err);
+      }
+      res.end();
+      cleanup();
+    })
+    .catch((err) => {
+      if (err instanceof TranscribeAbortError) {
+        try {
+          res.end();
+        } catch {}
+        cleanup();
+        return;
+      }
+      let wire = "Transcription failed";
+      if (err instanceof TranscribeError) {
+        if (err.kind === "parse") wire = "Failed to parse transcription output";
+        else if (err.kind === "spawn") wire = "Failed to start transcription process";
+        else wire = `Transcription failed: ${err.message}`;
+      }
+      res.write(`data: ${JSON.stringify({ status: "error", error: wire })}\n\n`);
+      res.end();
+      cleanup();
+    });
 });
 
 app.get("/api/stats", (_req, res) => {
@@ -358,160 +290,29 @@ app.post("/api/attribute", async (req, res) => {
   const send = (obj: any) => {
     if (!clientGone) res.write(`data: ${JSON.stringify(obj)}\n\n`);
   };
-  const fail = (msg: string) => {
-    send({ status: "error", error: msg });
-    res.end();
-  };
 
-  const segments = Array.isArray(body?.segments) ? body.segments : null;
-  if (!segments || segments.length === 0) return fail("segments array required");
-  if (segments.length > ATTR_MAX_SEGMENTS)
-    return fail(`Too many segments (${segments.length}). Max ${ATTR_MAX_SEGMENTS}.`);
-  for (const s of segments) {
-    if (typeof s.start !== "number" || typeof s.end !== "number" || typeof s.text !== "string") {
-      return fail("Each segment needs {start, end, text}");
-    }
-  }
-  const speakers = Array.isArray(body.speakers)
-    ? body.speakers
-        .filter((s) => s && typeof s.name === "string" && s.name.trim())
-        .map((s) => ({
-          name: s.name.trim().slice(0, 80),
-          description: typeof s.description === "string" ? s.description.trim().slice(0, 400) : "",
-        }))
-    : [];
-
-  const model =
-    typeof body.model === "string" && body.model.trim() ? body.model.trim() : ATTR_DEFAULT_MODEL;
-  const apiKey = (process.env.OPENROUTER_API_KEY || "").trim();
-  if (!apiKey)
-    return fail(
-      "Speaker attribution is unavailable — server has no OPENROUTER_API_KEY configured.",
-    );
-
-  send({
-    status: "attributing",
-    model,
-    rosterSize: speakers.length,
-    segmentCount: segments.length,
-  });
-
-  const { system, user } = buildAttributionPrompt({ segments, speakers });
-
-  let openrouterRes: Response;
   try {
-    openrouterRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": GITHUB_URL,
-        "X-Title": "Whisper It",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        stream: true,
-      }),
+    const result = await runAttribution({
+      segments: body?.segments,
+      speakers: body?.speakers,
+      model: body?.model,
+      referer: GITHUB_URL,
+      onProgress: (event) => send(event),
     });
-  } catch (e: any) {
-    return fail(`OpenRouter request failed: ${e?.message || String(e)}`);
+    send({
+      status: "result",
+      segments: result.merged,
+      speakers: result.speakers,
+      ambiguous: result.ambiguous,
+      notes: result.notes,
+      model: result.model,
+      warning: result.warning || null,
+    });
+    res.end();
+  } catch (err) {
+    send({ status: "error", error: err instanceof AttributeError ? err.message : String(err) });
+    res.end();
   }
-
-  if (!openrouterRes.ok) {
-    let errBody = "";
-    try {
-      errBody = (await openrouterRes.text()).slice(0, 400);
-    } catch {}
-    return fail(`OpenRouter ${openrouterRes.status}: ${errBody || openrouterRes.statusText}`);
-  }
-
-  const startedAt = Date.now();
-  const total = segments.length;
-  const contentType = openrouterRes.headers.get("content-type") || "";
-  let content = "";
-
-  if (contentType.includes("text/event-stream") && openrouterRes.body) {
-    // Streamed completion: forward live progress as the model emits assignments.
-    let lastDone = -1;
-    const emitProgress = (force = false) => {
-      const done = Math.min(countAssignedKeys(content), total);
-      if (force || done !== lastDone) {
-        lastDone = done;
-        send({ status: "progress", done, total, elapsedMs: Date.now() - startedAt });
-      }
-    };
-    // Heartbeat keeps the connection alive (and the bar moving) during silent
-    // "thinking" gaps where the model emits no tokens for several seconds.
-    const heartbeat = setInterval(() => emitProgress(true), 4000);
-    emitProgress(true); // show the bar immediately at 0
-    try {
-      const reader = (openrouterRes.body as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith("data:")) continue; // skip ": OPENROUTER PROCESSING" keep-alives
-          const data = t.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-          try {
-            const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
-            if (typeof delta === "string") content += delta;
-          } catch {
-            /* partial/non-JSON chunk — ignore */
-          }
-        }
-        emitProgress();
-      }
-      emitProgress(true);
-    } catch (e: any) {
-      clearInterval(heartbeat);
-      return fail(`OpenRouter stream failed: ${e?.message || String(e)}`);
-    }
-    clearInterval(heartbeat);
-  } else {
-    // Non-streaming (test mocks / providers that ignore `stream`): single JSON body.
-    let payload: any;
-    try {
-      payload = await openrouterRes.json();
-    } catch (e: any) {
-      return fail(`OpenRouter returned non-JSON: ${e?.message || String(e)}`);
-    }
-    content = payload?.choices?.[0]?.message?.content;
-  }
-
-  if (typeof content !== "string" || !content.trim()) {
-    return fail("OpenRouter response missing message content");
-  }
-
-  const {
-    merged,
-    speakers: resolvedSpeakers,
-    ambiguous,
-    notes,
-    warning,
-  } = applyAssignments(segments, content);
-  send({
-    status: "result",
-    segments: merged,
-    speakers: resolvedSpeakers,
-    ambiguous,
-    notes,
-    model,
-    warning: warning || null,
-  });
-  res.end();
 });
 
 const DEBUG_FIXTURES_ENABLED = process.env.WHISPER_DEBUG_FIXTURES === "1";
@@ -529,6 +330,7 @@ app.get("/api/version", (_req, res) => {
     xHandle: X_HANDLE,
     hasServerKey: !!(process.env.OPENROUTER_API_KEY || "").trim(),
     hasDebugFixtures: DEBUG_FIXTURES_ENABLED && fs.existsSync(FIXTURES_DIR),
+    hasWhatsApp: isWhatsAppConfigured(),
   });
 });
 
@@ -610,5 +412,8 @@ app.post("/api/zip", (req, res) => {
 
   archive.finalize();
 });
+
+// WhatsApp transcription (WAHA). No-op unless WAHA_BASE_URL is configured.
+mountWhatsApp(app, { dataDir: DATA_DIR, fallbackModel: PARAKEET_FALLBACK_MODEL });
 
 export const COMMIT_INFO = { COMMIT, COMMIT_SHORT };
