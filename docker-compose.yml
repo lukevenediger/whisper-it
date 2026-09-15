@@ -21,8 +21,10 @@ services:
       WAHA_BASE_URL: ${WAHA_BASE_URL:-http://waha:3000}
       WAHA_API_KEY: ${WAHA_API_KEY:-}
       WAHA_SESSION: ${WAHA_SESSION:-default}
-      # Reserved for phase-2 webhook signature verification (not enforced yet).
+      # Webhook HMAC secret (whisper-it verifies; WAHA signs with the same value below).
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:-}
+      # Telegram bot (long polling, no inbound port). Leave unset to disable the feature.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     depends_on:
       - waha
     # Memory budget — base/small + chunking fit easily; bump if running medium/large-v3 on long audio.
