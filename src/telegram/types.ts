@@ -100,6 +100,8 @@ export type TranscriptState = {
   segments: AttrSegment[];
   /** OpenRouter model for the Diarize sub-menu. */
   attrModel: string;
+  /** "First (@user)" for the usage table; carried through retries. */
+  displayName?: string;
   failed?: boolean;
   diarized?: boolean;
 };
