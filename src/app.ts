@@ -7,7 +7,8 @@ import archiver from "archiver";
 import { StatsStore } from "./stats";
 import { countWords } from "./lib/words";
 import { sanitizeZipName } from "./lib/sanitize";
-import { resolveEngine, PARAKEET_MODEL } from "./lib/engine";
+import { resolveEngine, PARAKEET_MODEL, VALID_MODELS } from "./lib/engine";
+import { VALID_LANGUAGES } from "./lib/languages";
 import { AttrSegment, AttrSpeaker } from "./lib/attribution";
 import { runTranscription, TranscribeError, TranscribeAbortError } from "./lib/transcribe-core";
 import { runAttribution, AttributeError } from "./lib/attribute-core";
@@ -42,8 +43,6 @@ export function startupSweep() {
   } catch {}
 }
 
-const VALID_MODELS = ["parakeet-v3", "tiny", "base", "small", "medium", "large-v3"];
-
 // Whisper model used when a Parakeet request forces an unsupported language.
 const PARAKEET_FALLBACK_MODEL =
   typeof process.env.WHISPER_PARAKEET_FALLBACK_MODEL === "string" &&
@@ -51,83 +50,6 @@ const PARAKEET_FALLBACK_MODEL =
   process.env.WHISPER_PARAKEET_FALLBACK_MODEL !== PARAKEET_MODEL
     ? process.env.WHISPER_PARAKEET_FALLBACK_MODEL
     : "small";
-const VALID_LANGUAGES = new Set([
-  "auto",
-  "en",
-  "es",
-  "fr",
-  "de",
-  "it",
-  "pt",
-  "nl",
-  "pl",
-  "ru",
-  "uk",
-  "tr",
-  "sv",
-  "da",
-  "no",
-  "fi",
-  "cs",
-  "hu",
-  "ro",
-  "el",
-  "bg",
-  "ja",
-  "ko",
-  "zh",
-  "ar",
-  "he",
-  "hi",
-  "bn",
-  "ur",
-  "fa",
-  "th",
-  "vi",
-  "id",
-  "ms",
-  "ta",
-  "te",
-  "ml",
-  "mr",
-  "gu",
-  "kn",
-  "pa",
-  "si",
-  "af",
-  "sw",
-  "am",
-  "yo",
-  "ig",
-  "ha",
-  "zu",
-  "xh",
-  "st",
-  "ca",
-  "gl",
-  "eu",
-  "cy",
-  "ga",
-  "is",
-  "sq",
-  "sr",
-  "hr",
-  "sk",
-  "sl",
-  "et",
-  "lv",
-  "lt",
-  "mk",
-  "be",
-  "mt",
-  "mn",
-  "kk",
-  "uz",
-  "az",
-  "hy",
-  "ka",
-  "ne",
-]);
 
 export const stats = new StatsStore(DATA_DIR);
 

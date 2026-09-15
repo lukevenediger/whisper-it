@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { readJson, writeJsonAtomic } from "./json-file";
+import { readJson, writeJsonAtomic } from "../lib/json-file";
 
 /** Reduce any phone input to bare E.164 digits (drop +, spaces, punctuation). */
 export function normalizeNumber(input: string): string {

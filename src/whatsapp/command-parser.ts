@@ -5,7 +5,7 @@ export type Command = { kind: "none" } | { kind: "help" } | { kind: "diarize"; n
 // Split a names string on commas, "and", or "&".
 const NAME_SEP = /\s*,\s*|\s+and\s+|\s*&\s*/i;
 
-function splitNames(rest: string): string[] {
+export function splitNames(rest: string): string[] {
   const trimmed = (rest || "").trim();
   if (!trimmed) return [];
   return trimmed

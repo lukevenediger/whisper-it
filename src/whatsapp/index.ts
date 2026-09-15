@@ -3,8 +3,9 @@ import { WAHAClient } from "./waha-client";
 import { WhitelistStore } from "./whitelist-store";
 import { SettingsStore } from "./settings-store";
 import { SenderStatsStore } from "./sender-stats-store";
-import { SessionStore } from "./session-state";
+import { SessionStore } from "../lib/session-store";
 import { createHandler } from "./handler";
+import { FlowState } from "./types";
 import { createWebhookRouter } from "./webhook";
 import { createAdminRouter } from "./admin";
 
@@ -34,7 +35,7 @@ export function mountWhatsApp(app: Express, opts: MountOptions): boolean {
   const whitelist = new WhitelistStore(opts.dataDir);
   const settings = new SettingsStore(opts.dataDir);
   const senderStats = new SenderStatsStore(opts.dataDir);
-  const sessions = new SessionStore();
+  const sessions = new SessionStore<FlowState>();
 
   const handle = createHandler({
     waha,
