@@ -13,6 +13,7 @@ import { AttrSegment, AttrSpeaker } from "./lib/attribution";
 import { runTranscription, TranscribeError, TranscribeAbortError } from "./lib/transcribe-core";
 import { runAttribution, AttributeError } from "./lib/attribute-core";
 import { mountWhatsApp, isWhatsAppConfigured } from "./whatsapp";
+import { mountTelegram, isTelegramConfigured } from "./telegram";
 
 export const DATA_DIR = process.env.WHISPER_DATA_DIR || path.join(os.tmpdir(), "whisper-it-data");
 
@@ -253,6 +254,7 @@ app.get("/api/version", (_req, res) => {
     hasServerKey: !!(process.env.OPENROUTER_API_KEY || "").trim(),
     hasDebugFixtures: DEBUG_FIXTURES_ENABLED && fs.existsSync(FIXTURES_DIR),
     hasWhatsApp: isWhatsAppConfigured(),
+    hasTelegram: isTelegramConfigured(),
   });
 });
 
@@ -337,5 +339,12 @@ app.post("/api/zip", (req, res) => {
 
 // WhatsApp transcription (WAHA). No-op unless WAHA_BASE_URL is configured.
 mountWhatsApp(app, { dataDir: DATA_DIR, fallbackModel: PARAKEET_FALLBACK_MODEL });
+
+// Telegram transcription bot. No-op unless TELEGRAM_BOT_TOKEN is configured.
+// Polling starts only when server.ts calls telegram.start() (tests import app).
+export const telegram = mountTelegram(app, {
+  dataDir: DATA_DIR,
+  fallbackModel: PARAKEET_FALLBACK_MODEL,
+});
 
 export const COMMIT_INFO = { COMMIT, COMMIT_SHORT };
