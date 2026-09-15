@@ -344,6 +344,25 @@ describe("telegram handler — audio", () => {
     expect(t.api.edits.filter((e) => e.text.startsWith("x\n")).length).toBe(2);
   });
 
+  it("never lets a slow progress edit land after the final transcript edit", async () => {
+    const t = build({
+      transcribe: async (o: any) => {
+        o.onProgress?.({ status: "transcribing", chunk: 1, total: 1 });
+        return { text: "final text", segments: [], language: "en", duration: 1 };
+      },
+    });
+    const applied: string[] = [];
+    t.api.editMessageText = async (p: any) => {
+      // Progress edits are slow on the wire; the final edit is fast.
+      if (p.text.startsWith("🎙")) await new Promise((r) => setTimeout(r, 20));
+      applied.push(p.text);
+      t.api.edits.push(p);
+    };
+    await t.handler.handleMessage(audioMsg(ALLOWED));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(applied.at(-1)).toContain("final text");
+  });
+
   it("dedupes a redelivered message", async () => {
     const t = build();
     await t.handler.handleMessage(audioMsg(ALLOWED));

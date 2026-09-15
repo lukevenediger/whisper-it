@@ -237,12 +237,18 @@ export function createHandler(deps: HandlerDeps): Handler {
     const statusId = status.message_id;
     let lastText = "";
     let lastEditAt = 0;
-    const edit = async (text: string, force = false) => {
-      if (text === lastText) return;
-      if (!force && now() - lastEditAt < throttleMs) return;
+    // All edits to the status message go through one chain so a slow progress
+    // edit can never land after (and clobber) the final transcript edit.
+    let editChain: Promise<void> = Promise.resolve();
+    const edit = (text: string, force = false): Promise<void> => {
+      if (text === lastText) return editChain;
+      if (!force && now() - lastEditAt < throttleMs) return editChain;
       lastText = text;
       lastEditAt = now();
-      await api.editMessageText({ chatId, messageId: statusId, text }).catch(() => {});
+      editChain = editChain.then(() =>
+        api.editMessageText({ chatId, messageId: statusId, text }).catch(() => {}),
+      );
+      return editChain;
     };
 
     await deps.queue.enqueue(
@@ -310,6 +316,7 @@ export function createHandler(deps: HandlerDeps): Handler {
             duration: state.duration,
             fallback: resolution.fallback,
           };
+          await editChain; // let in-flight progress edits settle before the final edit
           const finalId = await deliver({
             chatId,
             statusId,
@@ -371,6 +378,7 @@ export function createHandler(deps: HandlerDeps): Handler {
             failed: true,
           };
           deps.transcripts.set(transcriptKey(chatId, statusId), failed);
+          await editChain;
           await api
             .editMessageText({
               chatId,
