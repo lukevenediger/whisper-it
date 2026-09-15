@@ -35,6 +35,7 @@ Whisper It wraps all of that into a simple web app: open it in your browser, rec
 - **Save batch as zip** -- For multi-file uploads, click the batch badge (or the per-item _Zip batch_ button) to download every transcript in the batch as a single zip — one `.txt` per audio file, named after the originals.
 - **Speaker attribution (opt-in)** -- Click _Attribute_ on any transcription to open a modal. Optionally list the speakers (name + short role description) and pick a model from the dropdown. Whisper It calls an LLM via OpenRouter and assigns a named speaker to every segment. Leave the roster blank and the model guesses how many speakers there are and labels them `Speaker 1`, `Speaker 2`, …; fill it in and the model is locked to those names. Ambiguous segments get a `?` chip + a yellow highlight, with a short note from the model on how it resolved hard cases. Save promotes the result to a new sibling history entry — the original is never overwritten. Server-side `OPENROUTER_API_KEY` only — no per-user key entry. Never inline with the basic transcribe flow.
 - **WhatsApp transcription** -- Connect a WhatsApp number (via the bundled [WAHA](https://waha.devlike.pro) container) and send or forward it voice notes — the bot replies with the transcription, using the same pipeline as the web app. A UI-editable, deny-by-default number **whitelist** controls access; everyone else is silently ignored. Reply `diarize` (or `diarize Alice, Bob`) to get a speaker-labelled version. The `/whatsapp.html` admin page shows the pairing QR + connection status, the whitelist, transcription defaults, and per-sender usage stats. See [WhatsApp Transcription](#whatsapp-transcription) below.
+- **Telegram transcription** -- Create a bot with @BotFather, drop its token in `.env`, and send it voice notes, audio files or forwards — it replies with the transcript. Each reply carries **Retry** (pick another model), **Language** (force a language and re-run) and **Diarize** (guess speakers or type their names) buttons, mirroring the web features; `/model` and `/language` set your personal defaults. Short transcripts come back as a message, long ones as a **PDF**. Deny-by-default **whitelist** of Telegram user IDs; the `/telegram.html` admin page manages it plus defaults and usage. Long polling — no public URL needed. See [Telegram Transcription](#telegram-transcription) below.
 - **Persistent stats page** -- A `/stats.html` dashboard shows total transcriptions, audio duration processed, words produced, model and language breakdowns, last-30-days activity chart, longest item, and recent activity. Stats persist across container restarts via a Docker volume.
 - **Share** -- Uses the OS-level share sheet (WhatsApp, Telegram, Messages, AirDrop, email, etc.) on supported browsers. Falls back to clipboard copy.
 - **Microphone selector** -- When multiple mics are detected, pick the right one from a row of buttons. Your choice is remembered across sessions.
@@ -263,6 +264,75 @@ That's it — nothing else is machine-specific. (To actually migrate the linked 
 - **`diarize` says it's unavailable** — needs `OPENROUTER_API_KEY` set and the **Settings → offer diarization** toggle on.
 - **Media download fails in logs** — the app only fetches media from the configured `WAHA_BASE_URL` host; if WAHA is emitting URLs the app can't reach, check `WAHA_BASE_URL` points at the `waha` service.
 
+## Telegram Transcription
+
+Turn a Telegram bot into a transcription bot: send or forward it a voice note (or any audio file), get the text back. It runs the same engine as the web app (model routing, long-audio chunking, Parakeet/Whisper fallback) and surfaces the web features as buttons under each reply — retry with a different model, force a language, label the speakers.
+
+No extra container: the app talks to the Telegram Bot API directly and **long-polls** for updates, so it needs no public URL, inbound port or webhook — it works behind NAT or a VPN exactly like the rest of Whisper It.
+
+### Setup
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather): `/newbot`, pick a name and a username, copy the token.
+2. Put it in `.env` and start:
+
+   ```bash
+   cp .env.example .env
+   $EDITOR .env       # set TELEGRAM_BOT_TOKEN=123456:ABC-...
+   make run
+   ```
+
+3. Open <http://localhost:4000/telegram.html>. The **Bot** card shows `@your_bot` and `POLLING`.
+4. Message the bot from your own account. It replies `Not authorised. Your Telegram ID is 123456789`. Paste that ID into the **Whitelist** panel and save. It's **deny-by-default** — until an ID is listed, that user gets the one notice and is then ignored.
+5. Send or forward a voice note. The bot replies to it with the transcript.
+
+### Talking to the bot
+
+- **Voice note / audio file / video note** → a status message that updates while it works (queued → downloading → transcribing, chunk N/M for long audio), then the transcript with a footer (language · model · duration) and three buttons.
+- **Retry** → pick a different model (tiny … large-v3, parakeet-v3). The audio is re-fetched from Telegram and transcribed again into a **new** message — the original stays.
+- **Language** → pick a language (or Auto) and re-run with it. Forcing a language Parakeet can't do falls back to Whisper and says so in the footer.
+- **Diarize** → **Guess speakers** (model decides how many and labels them `Speaker 1`, `Speaker 2`, …), **Enter names** (reply with `Alice, Bob` to lock the roster) or switch the **LLM**. Requires `OPENROUTER_API_KEY` (see [Speaker Attribution](#speaker-attribution)); the button is hidden otherwise. Ambiguous segments are marked ⚠️.
+- **Long transcripts** (more than ~3000 characters once rendered) arrive as a **PDF** with a short preview in the caption; the same buttons apply. Diarized results use the same rule.
+- **Commands:** `/model` and `/language` show a picker and remember your choice (`/model medium`, `/language de` work too); `/diarize Alice, Bob` labels your last transcript; `/help` shows the cheat-sheet (also sent on first contact); `/start` welcomes you.
+- Put `diarize Alice, Bob` in the caption of a voice note to transcribe and label in one go.
+
+### Admin page (`/telegram.html`)
+
+- **Bot** — bot username (links to `t.me/…`), polling status (`POLLING` / `RETRYING` with the last error / `STOPPED`), queue state.
+- **Whitelist** — numeric Telegram user IDs, one per line.
+- **Defaults** — default model, default language, the OpenRouter model used for speaker labelling, and a toggle for offering Diarize at all. Also lists per-user overrides set via `/model` / `/language`, with a Reset button.
+- **Usage** — last-30-days chart + a per-user table (name, ID, count, audio, words, last seen).
+
+### Notes & limits
+
+- **20 MB cap** — Telegram lets bots download files up to 20 MB. Voice notes are tiny (~1 MB/min); a long forwarded MP3 may exceed it, and the bot says so. Compress to OGG/M4A or split it.
+- **One poller per token** — run a second instance with the same token and Telegram answers `409 Conflict`; the log says so and the page shows `RETRYING`. Stop the other instance.
+- **Retries need the audio to still be on Telegram** — the server keeps no audio (same rule as the web app); Retry/Language re-download by `file_id`. Buttons work for 6 hours after a transcript; after that the bot asks you to resend.
+- **PDF fonts** — the image bundles DejaVu Sans (Latin, Cyrillic, Greek). CJK/Arabic transcripts still arrive as text below the cut-off; in a PDF those glyphs won't render. Point `TELEGRAM_PDF_FONT` at another TTF if you need them.
+- Transcriptions run **one at a time** (shared memory budget); a second sender sees `Queued (1 ahead)`.
+- To disable Telegram entirely, unset `TELEGRAM_BOT_TOKEN`. The `/telegram.html` link is hidden when it's not configured.
+- **Security:** there is no auth in front of `/telegram.html` — keep the deployment behind a VPN, as with the rest of the app. The bot token is only ever sent to `api.telegram.org` (file downloads don't follow redirects) and never logged. Prompt-injection hardening and per-user rate limits are, as for WhatsApp, a planned phase 2.
+
+### State & where it lives
+
+| What                                      | Where                                                   | Survives `make run` rebuild? | Moves with a `git clone`? |
+| ----------------------------------------- | ------------------------------------------------------- | ---------------------------- | ------------------------- |
+| Bot token                                 | `.env` (git-ignored)                                    | Yes                          | **No**                    |
+| User-ID whitelist                         | `whisper-data` volume (`/data/telegram-whitelist.json`) | Yes                          | **No**                    |
+| Defaults + per-user overrides             | `whisper-data` volume (`/data/telegram-prefs.json`)     | Yes                          | **No**                    |
+| Per-user usage stats                      | `whisper-data` volume (`/data/telegram-stats.json`)     | Yes                          | **No**                    |
+| Transcript state behind the buttons (6 h) | in-memory only                                          | **No** (lost on restart)     | No                        |
+
+Moving to another machine is simpler than WhatsApp — there's no pairing. Copy the token into the new `.env`, `make run`, re-add the whitelist IDs (or copy the `whisper-data` volume).
+
+### Troubleshooting
+
+- **`STOPPED` / "Bot identity unknown"** — the token is wrong or unset. Check `make logs` for `[telegram] getMe failed`.
+- **`RETRYING` with `409 Conflict`** — another process is polling the same token (an old container, a dev server). Stop it.
+- **Bot replies "Not authorised"** — expected until the ID it printed is on the whitelist.
+- **Buttons say "expired"** — the in-memory state is gone (restart, or older than 6 h). Resend the audio.
+- **"too big"** — over Telegram's 20 MB bot download limit; compress or split the file.
+- **Diarize missing / "isn't enabled"** — needs `OPENROUTER_API_KEY` and the **Defaults → offer speaker labelling** toggle on.
+
 ## API
 
 If you want to integrate with Whisper It programmatically:
@@ -352,11 +422,13 @@ Returns the build's commit hash, short label, a direct link to the commit on Git
   "x": "https://x.com/jumpdest7d",
   "xHandle": "@jumpdest7d",
   "hasServerKey": true,
-  "hasDebugFixtures": false
+  "hasDebugFixtures": false,
+  "hasWhatsApp": false,
+  "hasTelegram": true
 }
 ```
 
-`short` is the last 4 chars of the commit hash (or `"dev"` if the build wasn't given `COMMIT_HASH`). The footer of every page renders this as `v·xxxx` linking to the exact commit. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; the Attribute modal will surface a clear error when it's `false`. `hasDebugFixtures` reflects `WHISPER_DEBUG_FIXTURES` and gates the dev-only fixtures dropdown described below.
+`short` is the last 4 chars of the commit hash (or `"dev"` if the build wasn't given `COMMIT_HASH`). The footer of every page renders this as `v·xxxx` linking to the exact commit. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; the Attribute modal will surface a clear error when it's `false`. `hasDebugFixtures` reflects `WHISPER_DEBUG_FIXTURES` and gates the dev-only fixtures dropdown described below. `hasWhatsApp` / `hasTelegram` reflect whether `WAHA_BASE_URL` / `TELEGRAM_BOT_TOKEN` are set and gate the admin-page links in the nav.
 
 ### POST /api/attribute
 
@@ -382,6 +454,16 @@ data: {"status":"result","segments":[{"start":0,"end":2.0,"text":"Hi everyone...
 On failure, the final event is `{"status":"error","error":"..."}`. Common causes: server has no `OPENROUTER_API_KEY` set, OpenRouter returned an error (401, rate-limited, etc.), or the model emitted unparseable output (in which case the result event is still sent with a `warning` and an alternating fallback labelling).
 
 The server never logs request bodies; the OpenRouter key is read into memory per-request and forwarded only to `openrouter.ai`.
+
+### Telegram endpoints (mounted only when `TELEGRAM_BOT_TOKEN` is set)
+
+All under `/api/telegram`, no auth (VPN-fronted like the rest). Inbound messages arrive via long polling, so there is no webhook route.
+
+- `GET /status` — `{ bot, polling: { running, offset, lastPollAt, lastError, consecutiveErrors }, queue: { running, pending } }`.
+- `GET /whitelist` / `PUT /whitelist` (`{ ids: number[] }`) — read/replace the user-ID allow-list (deny-by-default).
+- `GET /settings` / `PUT /settings` — global defaults `{ model, language, diarizeEnabled, attrModel }`.
+- `GET /users` / `DELETE /users/:id` — per-user `/model` / `/language` overrides.
+- `GET /stats` — per-day + per-user usage for the admin page.
 
 ### Debug endpoints (gated)
 
@@ -412,6 +494,9 @@ The frontend wires these into a dropdown + Run button on the main page so you ca
 | `OPENBLAS_NUM_THREADS`            | `2`                         | OpenBLAS thread cap.                                                                                                                                                |
 | `OPENROUTER_API_KEY`              | _(unset)_                   | OpenRouter key for the Speaker Attribution feature. When unset, the `/api/attribute` endpoint returns a clear error and the Attribute modal flags it. Never logged. |
 | `WHISPER_DEBUG_FIXTURES`          | `0`                         | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI for quick local testing. Off in production.                                         |
+| `TELEGRAM_BOT_TOKEN`              | _(unset)_                   | Bot token from @BotFather. Enables the Telegram bot (long polling). Unset = feature off. Never logged.                                                              |
+| `TELEGRAM_TEXT_LIMIT`             | `3000`                      | Telegram replies longer than this (rendered characters) are sent as a PDF instead of a message.                                                                     |
+| `TELEGRAM_PDF_FONT`               | DejaVu Sans                 | TTF used for PDF transcripts. Defaults to `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` (installed in the image); falls back to Helvetica (Latin-only).         |
 
 ### Memory & OOM
 
@@ -486,11 +571,18 @@ whisper-it/
     ├── stats.ts             # Persistent stats store (JSON file, atomic writes)
     ├── lib/
     │   ├── attribution.ts   # Prompt builder + JSON parser for the speaker-attribution feature
+    │   ├── json-file.ts     # readJson / writeJsonAtomic (shared by the bot stores)
+    │   ├── session-store.ts # Generic in-memory TTL store (bot conversation state)
+    │   ├── sender-stats-store.ts # Per-sender usage counters (WhatsApp + Telegram flavours)
     │   ├── sanitize.ts      # sanitizeZipName
     │   └── words.ts         # countWords
+    ├── whatsapp/            # WhatsApp bot via WAHA (webhook, handler, admin, stores)
+    ├── telegram/            # Telegram bot: long-poll client + poller, handler, keyboards, PDF, admin, stores
     └── public/
         ├── index.html       # Main UI (record / batch upload / history / footer / Attribute modal)
-        └── stats.html       # Stats dashboard
+        ├── stats.html       # Stats dashboard
+        ├── whatsapp.html    # WhatsApp admin page
+        └── telegram.html    # Telegram admin page
 ```
 
 ## Requirements
