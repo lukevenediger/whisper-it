@@ -1,8 +1,8 @@
 FROM node:20-slim
 
-# Install Python and dependencies for faster-whisper
+# Install Python + ffmpeg for transcription, and DejaVu fonts for Telegram PDF transcripts
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv ffmpeg \
+    python3 python3-pip python3-venv ffmpeg fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Create Python venv and install transcription engines:
