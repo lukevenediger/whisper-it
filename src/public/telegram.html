@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Whisper It · Telegram</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f0f; color: #e0e0e0;
+    display: flex; justify-content: center;
+    min-height: 100vh; padding: 2rem 1rem;
+  }
+  .container { max-width: 760px; width: 100%; }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1.5rem; gap: 1rem;
+  }
+  h1 { font-size: 1.5rem; color: #fff; }
+  h1 span { color: #888; font-weight: 400; font-size: 0.9rem; }
+  .nav-link {
+    color: #5b8def; text-decoration: none; font-size: 0.85rem;
+    padding: 0.4rem 0.75rem; border-radius: 6px; border: 1px solid #2a3f5f;
+  }
+  .nav-link:hover { background: rgba(91,141,239,0.1); }
+  a { color: #5b8def; }
+
+  .panel {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
+    padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+  }
+  .panel h2 { font-size: 0.95rem; color: #ccc; margin-bottom: 0.9rem; font-weight: 600; }
+
+  .status-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+    border: 1px solid #333; background: #222; color: #ccc;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #888; }
+  .badge.working { color: #5fd38d; border-color: #1f5f3a; background: rgba(95,211,141,0.08); }
+  .badge.working .dot { background: #5fd38d; }
+  .badge.warn { color: #f3c969; border-color: #5f4f1f; background: rgba(243,201,105,0.08); }
+  .badge.warn .dot { background: #f3c969; }
+  .badge.failed, .badge.stopped { color: #f37d7d; border-color: #5f1f1f; background: rgba(243,125,125,0.08); }
+  .badge.failed .dot, .badge.stopped .dot { background: #f37d7d; }
+  .hint { font-size: 0.8rem; color: #888; margin-top: 0.6rem; }
+  .hint code { font-family: ui-monospace, monospace; color: #bbb; }
+
+  button {
+    font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid #2a3f5f;
+    background: #1c2a44; color: #cfe0ff; padding: 0.45rem 0.9rem; font-size: 0.85rem;
+  }
+  button:hover { background: #24375a; }
+  button.small { padding: 0.2rem 0.55rem; font-size: 0.75rem; }
+  .btn-row { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+
+  label.field { display: block; margin-bottom: 0.8rem; font-size: 0.85rem; color: #ccc; }
+  label.field span { display: block; margin-bottom: 0.3rem; color: #888; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  select, input[type=text], textarea {
+    width: 100%; font: inherit; font-size: 0.9rem; color: #e0e0e0;
+    background: #111; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.6rem;
+  }
+  textarea { min-height: 110px; resize: vertical; font-family: ui-monospace, monospace; }
+  .toggle-row { display: flex; align-items: center; gap: 0.6rem; }
+  .toggle-row input { width: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid #262626; }
+  th { color: #888; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  td { color: #ccc; font-variant-numeric: tabular-nums; }
+  td.muted { color: #777; }
+  .empty { color: #888; padding: 1rem 0; text-align: center; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem; margin-bottom: 1rem; }
+  .stat-card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1rem 1.1rem; }
+  .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 0.4rem; }
+  .stat-value { font-size: 1.6rem; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+
+  .day-chart { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin-top: 0.5rem;
+    border-bottom: 1px solid #333; padding-bottom: 0.25rem; }
+  .day-bar { flex: 1; background: #5b8def; border-radius: 2px 2px 0 0; min-height: 1px; }
+  .day-bar[data-zero="1"] { background: #2a2a2a; }
+
+  .saved { color: #5fd38d; font-size: 0.8rem; margin-left: 0.6rem; opacity: 0; transition: opacity 0.2s; }
+  .saved.show { opacity: 1; }
+  .footer { margin-top: 2rem; text-align: center; font-size: 0.8rem; color: #555; }
+  .footer code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <h1>Whisper It <span>Telegram</span></h1>
+    <a class="nav-link" href="/">← Back</a>
+  </div>
+
+  <div class="panel">
+    <h2>Bot</h2>
+    <div class="status-row">
+      <span class="badge" id="statusBadge"><span class="dot"></span><span id="statusText">…</span></span>
+      <span class="hint" id="statusHint" style="margin-top:0"></span>
+    </div>
+    <div class="hint" id="botLine">Loading…</div>
+    <div class="hint" id="queueLine"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Whitelist <span class="saved" id="wlSaved">saved</span></h2>
+    <p class="hint" style="margin-bottom:0.6rem">One numeric Telegram user ID per line. Only these users get replies. Anyone else who messages the bot is told their ID once (so they can send it to you), then ignored.</p>
+    <textarea id="whitelist" placeholder="123456789&#10;987654321"></textarea>
+    <div class="btn-row"><button id="wlSave">Save whitelist</button></div>
+  </div>
+
+  <div class="panel">
+    <h2>Defaults <span class="saved" id="setSaved">saved</span></h2>
+    <p class="hint" style="margin-bottom:0.8rem">Used for every user who hasn't set their own via <code>/model</code> or <code>/language</code>.</p>
+    <label class="field"><span>Default model</span>
+      <select id="model">
+        <optgroup label="Whisper">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
+        </optgroup>
+        <optgroup label="Parakeet">
+          <option value="parakeet-v3">parakeet-v3</option>
+        </optgroup>
+      </select>
+    </label>
+    <label class="field"><span>Default language</span>
+      <input type="text" id="language" placeholder="auto" maxlength="10">
+    </label>
+    <label class="field"><span>Speaker-labelling LLM (OpenRouter)</span>
+      <select id="attrModel">
+        <option value="deepseek/deepseek-v4-flash">deepseek/deepseek-v4-flash (default)</option>
+        <option value="qwen/qwen3.5-flash-02-23">qwen/qwen3.5-flash-02-23</option>
+        <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
+        <option value="google/gemma-4-26b-a4b-it">google/gemma-4-26b-a4b-it</option>
+      </select>
+    </label>
+    <label class="field toggle-row">
+      <input type="checkbox" id="diarize">
+      <span style="margin:0; text-transform:none; letter-spacing:0; font-size:0.85rem; color:#ccc">Offer speaker labelling (Diarize button, /diarize) — requires OpenRouter key</span>
+    </label>
+    <div class="btn-row"><button id="setSave">Save defaults</button></div>
+    <table style="margin-top:1rem" id="userTable">
+      <thead><tr><th>User overrides</th><th>Model</th><th>Language</th><th></th></tr></thead>
+      <tbody id="userRows"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Usage</h2>
+    <div class="grid">
+      <div class="stat-card"><div class="stat-label">Transcriptions</div><div class="stat-value" id="uTotal">0</div></div>
+      <div class="stat-card"><div class="stat-label">Audio</div><div class="stat-value" id="uDur">0s</div></div>
+      <div class="stat-card"><div class="stat-label">Users</div><div class="stat-value" id="uSenders">0</div></div>
+    </div>
+    <div class="day-chart" id="dayChart"></div>
+    <table style="margin-top:1rem">
+      <thead><tr><th>User</th><th>ID</th><th>Count</th><th>Audio</th><th>Words</th><th>Last seen</th></tr></thead>
+      <tbody id="senderRows"></tbody>
+    </table>
+  </div>
+
+  <div class="footer">Telegram bot via long polling — no inbound port. No auth on this page — keep behind a VPN.</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function fmtDur(sec) {
+  sec = Math.round(sec || 0);
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  return (sec / 3600).toFixed(1) + "h";
+}
+function fmtDate(ts) {
+  if (!ts) return "—";
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function flash(id) { const el = $(id); el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1400); }
+
+// --- Bot status ---
+async function refreshStatus() {
+  const badge = $("statusBadge"), text = $("statusText"), hint = $("statusHint");
+  try {
+    const r = await fetch("/api/telegram/status");
+    const s = await r.json();
+    const p = s.polling || {};
+    badge.className = "badge";
+    hint.textContent = "";
+    if (p.running && !p.lastError) { badge.classList.add("working"); text.textContent = "POLLING"; }
+    else if (p.running) { badge.classList.add("warn"); text.textContent = "RETRYING"; hint.textContent = p.lastError || ""; }
+    else { badge.classList.add("stopped"); text.textContent = "STOPPED"; hint.textContent = p.lastError || "Not polling."; }
+    if (s.bot && s.bot.username) {
+      $("botLine").innerHTML = `Bot: <a href="https://t.me/${esc(s.bot.username)}" target="_blank" rel="noopener">@${esc(s.bot.username)}</a> — open it in Telegram and send a voice note.`;
+    } else if (s.bot) {
+      $("botLine").textContent = `Bot: ${s.bot.first_name}`;
+    } else {
+      $("botLine").textContent = "Bot identity unknown — check TELEGRAM_BOT_TOKEN and the container logs.";
+    }
+    const q = s.queue || {};
+    $("queueLine").textContent = q.running ? `Transcribing now · ${q.pending || 0} queued` : "Idle";
+  } catch {
+    text.textContent = "unreachable";
+    badge.className = "badge failed";
+  }
+}
+
+// --- Whitelist ---
+async function loadWhitelist() {
+  const r = await fetch("/api/telegram/whitelist");
+  const j = await r.json();
+  $("whitelist").value = (j.ids || []).join("\n");
+}
+$("wlSave").onclick = async () => {
+  const ids = $("whitelist").value.split("\n").map((n) => n.trim()).filter(Boolean);
+  const r = await fetch("/api/telegram/whitelist", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+  });
+  const j = await r.json();
+  $("whitelist").value = (j.ids || []).join("\n");
+  flash("wlSaved");
+};
+
+// --- Defaults + per-user overrides ---
+async function loadSettings() {
+  const r = await fetch("/api/telegram/settings");
+  const s = await r.json();
+  $("model").value = s.model || "small";
+  $("language").value = s.language || "auto";
+  $("attrModel").value = s.attrModel || "deepseek/deepseek-v4-flash";
+  $("diarize").checked = !!s.diarizeEnabled;
+  await loadUsers();
+}
+$("setSave").onclick = async () => {
+  const body = {
+    model: $("model").value,
+    language: $("language").value.trim() || "auto",
+    attrModel: $("attrModel").value,
+    diarizeEnabled: $("diarize").checked,
+  };
+  const r = await fetch("/api/telegram/settings", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const s = await r.json();
+  $("language").value = s.language || "auto";
+  flash("setSaved");
+};
+async function loadUsers() {
+  const r = await fetch("/api/telegram/users");
+  const j = await r.json();
+  const entries = Object.entries(j.users || {});
+  $("userRows").innerHTML = entries.length
+    ? entries.map(([id, p]) =>
+        `<tr><td>${esc(id)}</td><td>${esc(p.model || "—")}</td><td>${esc(p.language || "—")}</td>` +
+        `<td style="text-align:right"><button class="small" data-clear="${esc(id)}">Reset</button></td></tr>`
+      ).join("")
+    : `<tr><td colspan="4" class="empty">No per-user overrides</td></tr>`;
+  $("userRows").querySelectorAll("button[data-clear]").forEach((b) => {
+    b.onclick = async () => { await fetch(`/api/telegram/users/${b.dataset.clear}`, { method: "DELETE" }); loadUsers(); };
+  });
+}
+
+// --- Usage ---
+async function loadStats() {
+  const r = await fetch("/api/telegram/stats");
+  const s = await r.json();
+  $("uTotal").textContent = s.total || 0;
+  $("uDur").textContent = fmtDur(s.totalDurationSec);
+  const senders = Object.entries(s.bySender || {});
+  $("uSenders").textContent = senders.length;
+
+  const days = [];
+  const now = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now); d.setDate(now.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    days.push({ key, count: (s.byDay || {})[key] || 0 });
+  }
+  const max = Math.max(1, ...days.map((d) => d.count));
+  $("dayChart").innerHTML = days.map((d) =>
+    `<div class="day-bar" data-zero="${d.count === 0 ? 1 : 0}" style="height:${Math.round((d.count / max) * 100)}%" title="${d.key}: ${d.count}"></div>`
+  ).join("");
+
+  const rows = senders.sort((a, b) => b[1].count - a[1].count).map(([id, rec]) =>
+    `<tr><td>${esc(rec.displayName || "—")}</td><td class="muted">${esc(id)}</td><td>${rec.count}</td><td>${fmtDur(rec.durationSec)}</td><td>${rec.words}</td><td>${fmtDate(rec.lastSeen)}</td></tr>`
+  ).join("");
+  $("senderRows").innerHTML = rows || `<tr><td colspan="6" class="empty">No activity yet</td></tr>`;
+}
+
+// init
+refreshStatus();
+loadWhitelist();
+loadSettings();
+loadStats();
+setInterval(() => { refreshStatus(); loadStats(); }, 4000);
+</script>
+</body>
+</html>

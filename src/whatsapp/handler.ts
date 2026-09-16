@@ -8,9 +8,9 @@ import { WahaApi } from "./waha-client";
 import { WhitelistStore } from "./whitelist-store";
 import { SettingsStore } from "./settings-store";
 import { SenderStatsStore } from "./sender-stats-store";
-import { SessionStore } from "./session-state";
+import { SessionStore } from "../lib/session-store";
 import { extractDiarize, parseCommand } from "./command-parser";
-import { InboundMessage } from "./types";
+import { FlowState, InboundMessage } from "./types";
 
 type TranscribeFn = (opts: {
   model: string;
@@ -28,7 +28,7 @@ export type HandlerDeps = {
   whitelist: WhitelistStore;
   settings: SettingsStore;
   senderStats: SenderStatsStore;
-  sessions: SessionStore;
+  sessions: SessionStore<FlowState>;
   /** Whether server-side OpenRouter key exists (gates the diarize feature). */
   hasOpenRouterKey: () => boolean;
   /** Injectable for tests; defaults to the real transcription core. */

@@ -5,6 +5,16 @@
 
 export const PARAKEET_MODEL = "parakeet-v3";
 
+/** Every model id /api/transcribe accepts (Parakeet first, then Whisper sizes). */
+export const VALID_MODELS: readonly string[] = [
+  PARAKEET_MODEL,
+  "tiny",
+  "base",
+  "small",
+  "medium",
+  "large-v3",
+];
+
 // The 25 languages nvidia/parakeet-tdt-0.6b-v3 supports (ISO 639-1).
 export const PARAKEET_LANGS = new Set([
   "bg",

@@ -6,7 +6,8 @@ import { createHandler } from "../../src/whatsapp/handler";
 import { WhitelistStore } from "../../src/whatsapp/whitelist-store";
 import { SettingsStore } from "../../src/whatsapp/settings-store";
 import { SenderStatsStore } from "../../src/whatsapp/sender-stats-store";
-import { SessionStore } from "../../src/whatsapp/session-state";
+import { SessionStore } from "../../src/lib/session-store";
+import type { FlowState } from "../../src/whatsapp/types";
 import type { InboundMessage } from "../../src/whatsapp/types";
 
 const ALLOWED = "27821234567@c.us";
@@ -61,7 +62,7 @@ function build(opts: { hasKey?: boolean } = {}) {
   whitelist.add(ALLOWED);
   const settings = new SettingsStore(dir);
   const senderStats = new SenderStatsStore(dir);
-  const sessions = new SessionStore();
+  const sessions = new SessionStore<FlowState>();
   const waha = makeFakeWaha();
   const transcribe = async () => ({
     text: "hello world",

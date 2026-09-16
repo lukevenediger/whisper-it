@@ -1,10 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { readJson, writeJsonAtomic } from "./json-file";
+import { readJson, writeJsonAtomic } from "../lib/json-file";
+import { VALID_MODELS } from "../lib/engine";
 import { SenderSettings } from "./types";
-
-// Mirrors VALID_MODELS in app.ts. Kept local to avoid a circular import.
-const VALID_MODELS = ["parakeet-v3", "tiny", "base", "small", "medium", "large-v3"];
 
 const DEFAULTS: SenderSettings = { model: "small", language: "auto", diarizeEnabled: true };
 

@@ -65,6 +65,21 @@ make run
 - **State / moving machines:** the WhatsApp pairing (`waha-sessions` volume), the whitelist + settings + stats (`whisper-data` volume, `/data/whatsapp-*.json`), and `.env` are all machine-local — none travel with `git clone`. On a new machine: recreate `.env`, `make run`, re-scan the QR, re-add the whitelist. See README → _Moving to another machine_ for the steps + the optional volume-copy recipe.
 - Security note: there's no auth in front of `/whatsapp.html` or the WAHA dashboard — keep the whole thing behind a VPN. Media-download SSRF and webhook forgery are hardened (see Key Design Decisions); prompt-injection hardening + per-sender rate limits remain a deferred phase 2. Full design rationale: [docs/plans/2026-06-22-whatsapp-transcription-design.md](docs/plans/2026-06-22-whatsapp-transcription-design.md).
 
+### Optional: enable Telegram transcription
+
+No extra container — the app long-polls the Telegram Bot API, so no public URL or inbound port is needed.
+
+```bash
+cp .env.example .env
+$EDITOR .env       # set TELEGRAM_BOT_TOKEN from @BotFather
+make run
+```
+
+- Open `http://localhost:4000/telegram.html` → **Bot** card shows `@bot` + `POLLING`. Message the bot from your account → it replies with your numeric ID → paste it into **Whitelist**. Deny-by-default; non-whitelisted users get that one notice, then silence. Private chats only.
+- Send a voice note / audio / audio document / video note → status message updates through queued / downloading / transcribing → transcript with **Retry** (model picker), **Language** (picker) and **Diarize** (guess / enter names / LLM picker) inline buttons. Retry and Language re-download the audio by `file_id` and reply as a **new** message (server never keeps audio). Rendered transcript > `TELEGRAM_TEXT_LIMIT` (3000) chars → sent as a **PDF** (pdfkit + DejaVu Sans) with a caption preview; same rule for diarized output.
+- Commands: `/model [id]`, `/language [code]` (per-user defaults, persisted), `/diarize [names]` (last transcript), `/help`, `/start`. Caption `diarize Alice, Bob` on the audio labels in one go.
+- Limits: 20 MB bot download cap (surfaced to the user), one poller per token (409 → logged, `RETRYING` badge), 6 h in-memory window for the buttons, one transcription at a time (serial queue). Design rationale: [docs/plans/2026-09-15-telegram-transcription-design.md](docs/plans/2026-09-15-telegram-transcription-design.md).
+
 ## Features
 
 - **Record or upload** -- Record from your mic (with live visualizer) or upload/drop one or more audio files
@@ -82,6 +97,7 @@ make run
 - **Save batch .zip** -- Per-batch zip download (one .txt per source audio, named after source filename)
 - **Speaker attribution (opt-in, cloud)** -- Click **Attribute** on any history item to open a modal. Optionally list the speakers (leave blank to let the model guess and label them `Speaker 1`/`Speaker 2`/...), pick an OpenRouter model from the dropdown, submit. Ambiguous segments are highlighted in the result preview. Save promotes it to a new sibling history entry — the original is never overwritten.
 - **WhatsApp transcription (via WAHA)** -- Send or forward a voice note to a connected WhatsApp number and the bot replies with the transcription, reusing the full pipeline (model routing, chunking, fallback). A **deny-by-default whitelist** of numbers (UI-editable) gates access; everyone else is silently ignored. First-time senders get a welcome/help message; `help` shows it again. Reply **diarize** (or `diarize Alice, Bob`) after a transcript — or put the keyword in the voice-note caption — to get a speaker-labelled version (needs `OPENROUTER_API_KEY`). Admin page `/whatsapp.html` shows the QR + connection status, the whitelist editor, transcription defaults, and per-day / per-sender usage stats. Provided by the `waha` container in docker-compose; the app proxies the QR/status so the WAHA key never reaches the browser.
+- **Telegram transcription (long polling)** -- Send audio to a BotFather bot; replies carry inline **Retry / Language / Diarize** buttons that mirror the web features (model picker, language picker, guess-or-name speakers + LLM picker). `/model`, `/language` per-user defaults; `/diarize` on the last transcript. Text reply ≤ 3000 rendered chars, else PDF. Deny-by-default numeric user-ID whitelist; admin page `/telegram.html` (bot status, whitelist, defaults, per-user overrides, usage). No extra container, no public URL.
 - **Share** -- Uses OS-level share sheet (WhatsApp, Telegram, Messages, etc.) on supported browsers
 - **Mic selector** -- Pick which microphone to use when multiple are available
 - **Persistent stats** -- `/stats.html` shows total counts, audio duration, words, by-model/by-language breakdowns, last-30-days chart, longest item, recent activity. Persisted across restarts in the `whisper-data` volume.
@@ -108,22 +124,26 @@ Transcription progress is streamed to the browser via Server-Sent Events (SSE). 
 ```
 whisper-it/
 ├── docker-compose.yml       # whisper-it + waha services, model/data/waha-sessions volumes, mem_limit, env passthrough
-├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + onnx-asr[cpu,hub], HF_HOME=/models, thread caps + commit ARG
+├── Dockerfile               # node:20-slim + Python 3 + faster-whisper + onnx-asr[cpu,hub] + fonts-dejavu-core (PDFs), HF_HOME=/models, thread caps + commit ARG
 ├── Makefile                 # make run/build/logs/clean (injects COMMIT_HASH=$(git rev-parse HEAD))
 ├── .dockerignore
-├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_PARAKEET_* + WAHA_* + WHISPER_DEBUG_FIXTURES
-├── package.json             # Express, multer, archiver, TypeScript + test/lint deps
+├── .env.example             # Documented template for OPENROUTER_API_KEY + WHISPER_PARAKEET_* + WAHA_* + TELEGRAM_BOT_TOKEN + WHISPER_DEBUG_FIXTURES
+├── package.json             # Express, multer, archiver, pdfkit, TypeScript + test/lint deps
 ├── tsconfig.json
 ├── transcribe.py            # Python: engine-agnostic chunk loop (run_chunked); Whisper (faster-whisper) + Parakeet (onnx-asr + Silero VAD) paths; JSON out
 ├── src/
-│   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen
-│   ├── app.ts               # Configured Express app: /api/transcribe + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures + mountWhatsApp(app), static. Exported for in-process supertest.
+│   ├── server.ts            # Thin entry: imports app, runs startupSweep, calls app.listen, then telegram?.start(); SIGTERM/SIGINT → telegram.stop() + close
+│   ├── app.ts               # Configured Express app: /api/transcribe + /api/stats + /api/zip + /api/version + /api/attribute + /api/debug/fixtures + mountWhatsApp(app) + mountTelegram(app) (exported as `telegram`), static. Exported for in-process supertest.
 │   ├── stats.ts             # Atomic JSON stats store backed by /data/stats.json
 │   ├── lib/
 │   │   ├── attribution.ts   # buildAttributionPrompt + applyAssignments (markdown-fence / prose-recovery / ambiguous + notes / fallback)
 │   │   ├── attribute-core.ts # runAttribution(): non-route attribution core (OpenRouter call + applyAssignments). Shared by /api/attribute SSE route + WhatsApp handler.
 │   │   ├── transcribe-core.ts # runTranscription(): spawns transcribe.py, streams progress via onProgress, resolves result. describeFailure() classifies OOM/signal/exit. Shared by /api/transcribe SSE route + WhatsApp handler.
-│   │   ├── engine.ts        # resolveEngine(model, language) → engine + effective model; PARAKEET_LANGS (25 codes); Whisper fallback for unsupported langs
+│   │   ├── engine.ts        # resolveEngine(model, language) → engine + effective model; VALID_MODELS; PARAKEET_LANGS (25 codes); Whisper fallback for unsupported langs
+│   │   ├── languages.ts     # VALID_LANGUAGES (ISO 639-1 set + "auto") shared by the API and the bots
+│   │   ├── json-file.ts     # readJson / writeJsonAtomic (atomic-write helper shared by the bot stores)
+│   │   ├── session-store.ts # SessionStore<T>: in-memory TTL map with maxEntries eviction (bot conversation state)
+│   │   ├── sender-stats-store.ts # Per-sender + per-day usage counters; {filename, normalizeKey} options so WhatsApp + Telegram each get their own file
 │   │   ├── sanitize.ts      # sanitizeZipName
 │   │   └── words.ts         # countWords
 │   ├── whatsapp/            # WhatsApp transcription via WAHA (see Key Design Decisions)
@@ -135,17 +155,32 @@ whisper-it/
 │   │   ├── command-parser.ts # parseCommand() (reply: diarize/diarise/help) + extractDiarize() (caption keyword + names)
 │   │   ├── whitelist-store.ts # WhitelistStore (deny-by-default) + normalizeNumber/jidToNumber; /data/whatsapp-whitelist.json
 │   │   ├── settings-store.ts # SettingsStore: default model/language/diarizeEnabled; /data/whatsapp-settings.json
-│   │   ├── sender-stats-store.ts # SenderStatsStore: per-day + per-sender counts + greeted flag; /data/whatsapp-stats.json
-│   │   ├── session-state.ts # SessionStore: in-memory TTL map (chatId → last transcript) for the interactive diarize flow
-│   │   ├── json-file.ts     # readJson / writeJsonAtomic (atomic-write helper shared by the WA stores)
+│   │   ├── sender-stats-store.ts # Thin subclass of lib/sender-stats-store keyed by phone number; /data/whatsapp-stats.json
 │   │   └── types.ts         # InboundMessage / FlowState / SenderSettings
+│   ├── telegram/            # Telegram transcription bot via the Bot API (long polling; see Key Design Decisions)
+│   │   ├── index.ts         # mountTelegram(app, {dataDir, fallbackModel}) → {start, stop} | null; isTelegramConfigured(). Mounting never polls — server.ts calls start()
+│   │   ├── telegram-client.ts # TelegramApi interface + TelegramClient (fetch): getUpdates/sendMessage/edit*/sendDocument/answerCallbackQuery/downloadFile (20 MB guard, no redirects)
+│   │   ├── poller.ts        # createPoller: getUpdates loop, offset tracking, backoff (409 → 5 s, 429 → retry_after, else 1→30 s), abortable stop()
+│   │   ├── update-parser.ts # parseUpdate(): raw Update → InboundMessage / InboundCallback; extractAudio (voice/audio/audio-document/video_note)
+│   │   ├── handler.ts       # Orchestration: gate → welcome → queue → download → transcribe → text-or-PDF reply; callbacks (retry/lang/diarize/llm/pref); slash commands
+│   │   ├── callback-data.ts # encode/decode ≤64-byte versioned callback_data (menu/retry/lang/diar/llm/pref/noop), validating on decode
+│   │   ├── keyboards.ts     # Inline keyboard builders: transcript, model picker, language picker, diarize menu, LLM picker
+│   │   ├── format.ts        # HTML escaping, footer, transcriptReply/attributedReply (+ fitsText vs TEXT_CUTOFF), pdfCaption, progressText, HELP/WELCOME copy
+│   │   ├── pdf.ts           # buildTranscriptPdf via pdfkit; DejaVu Sans (TELEGRAM_PDF_FONT) with Helvetica fallback
+│   │   ├── queue.ts         # createSerialQueue: one transcription at a time; pending/running/drain/abortAll
+│   │   ├── commands.ts      # parseSlash(): /start /help /model /language /diarize (+@BotName); BOT_COMMANDS for setMyCommands
+│   │   ├── whitelist-store.ts # TelegramWhitelistStore (numeric user ids, deny-by-default); /data/telegram-whitelist.json
+│   │   ├── prefs-store.ts   # PrefsStore: global defaults {model, language, diarizeEnabled, attrModel} + per-user overrides; /data/telegram-prefs.json
+│   │   ├── admin.ts         # /api/telegram admin router: status, whitelist, settings, users, stats
+│   │   └── types.ts         # Bot API wire subset + InboundMessage / InboundCallback / TranscriptState / ChatState / prefs
 │   └── public/
 │       ├── index.html       # Main UI: record / multi-upload queue / history / footer / debug-fixtures strip / attribute modal / WhatsApp nav link
 │       ├── stats.html       # Stats dashboard
-│       └── whatsapp.html    # WhatsApp admin: QR + connection status, number whitelist, defaults, per-sender usage
+│       ├── whatsapp.html    # WhatsApp admin: QR + connection status, number whitelist, defaults, per-sender usage
+│       └── telegram.html    # Telegram admin: bot + polling status, user-id whitelist, defaults + per-user overrides, usage
 ├── tests/
-│   ├── unit/                # vitest TS
-│   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container
+│   ├── unit/                # vitest TS (wa-* / tg-* for the bots' pure modules + stores)
+│   ├── integration/         # supertest in-process + msw + live OpenRouter + live transcribe via running container; tg-handler (fake TelegramApi + stubbed cores), tg-client (msw), tg-mount (no network on import)
 │   ├── e2e/                 # Playwright specs (basic, retranscribe, batch, language, history, recording, attribute, mobile)
 │   └── fixtures/
 │       ├── generate-audio.sh    # espeak-ng + ffmpeg → short/medium/multispeaker/silence-padded/spanish/long.wav
@@ -166,6 +201,7 @@ whisper-it/
 - **Parakeet v3 via onnx-asr, not NeMo** -- Parakeet v3 (`nemo-parakeet-tdt-0.6b-v3`) is offered as a selectable engine (default is whisper `small`). Same model the [Handy](https://github.com/cjpais/Handy) app uses. Handy runs it in Rust on ONNX Runtime (`transcribe-rs`); we consume the **same int8 ONNX weights** from Python via [`onnx-asr`](https://github.com/istupakov/onnx-asr) (deps: only `numpy` + `onnxruntime` — no PyTorch/NeMo). ~670 MB disk / ~2 GB RAM, CPU-only, CC-BY-4.0, no HF gating — fits the existing 8 GB container. NeMo was rejected: PyTorch dep tree, GPU-oriented. Parakeet's input window is ~20-30 s, so it **always** runs through onnx-asr's Silero VAD segmentation (not just for long audio).
 - **WhatsApp via WAHA, bot logic in-process** -- The WhatsApp link is [WAHA](https://waha.devlike.pro) (WhatsApp HTTP API) running as a second compose container; WAHA Core (free) covers receiving voice notes, downloading media, and sending replies. The bot orchestration lives **inside the existing Node app** (`src/whatsapp/`), not a separate service, so it reuses the transcription/attribution pipeline directly. To make that reuse clean, the transcription + attribution orchestration was extracted from the Express SSE route closures into `src/lib/transcribe-core.ts` (`runTranscription`) and `src/lib/attribute-core.ts` (`runAttribution`); the browser SSE routes forward an `onProgress` callback, the WhatsApp handler `await`s the promise. WAHA uses the **NOWEB** engine (no headless Chromium → ~300 MB vs ~1-2 GB), with its session persisted to the `waha-sessions` volume so the QR isn't re-scanned on restart. WAHA's port is not published — only the app talks to it, proxying QR/status so the API key stays server-side. Media downloads are **origin-pinned**: `downloadMedia` keeps only the path of the webhook-supplied `media.url`, forces the configured `WAHA_BASE_URL` origin, and uses `redirect: "manual"` so the `X-Api-Key` is never sent to an attacker-influenced host (SSRF / credential-leak guard) — this also fixes WAHA emitting `localhost`-based file URLs that don't resolve from inside the container. **Webhook HMAC verification** is implemented: when `WHATSAPP_WEBHOOK_SECRET` is set, WAHA signs each webhook (`WHATSAPP_HOOK_HMAC_KEY`, wired to the same value in compose) and the route rejects any request without a valid `X-Webhook-Hmac` (HMAC-SHA512 of the raw body, hex) with `401` before the handler runs — constant-time compared, raw body captured via the `express.json` `verify` hook. _Remaining security (prompt-injection hardening, per-sender rate limits) is deferred to a phase 2._
 - **Whisper fallback for non-European languages** -- When the user picks Parakeet, it covers 25 European languages and auto-detects (ignores manual hints). Forcing a language outside that set downgrades to a Whisper model (`resolveEngine` in `src/lib/engine.ts`), surfaced via a `fallback` SSE event. Keeps the full ~80-language capability when Parakeet is selected.
+- **Telegram via long polling, hand-rolled client, in-process bot** -- `src/telegram/` mirrors `src/whatsapp/` but talks to the Bot API directly (no gateway container) with a ~250-line `fetch` client, and **long-polls** `getUpdates` so nothing needs a public URL — consistent with the VPN-only deployment rule. Polling starts from `src/server.ts` (`telegram.start()` after `listen`), never at `app.ts` import, because the integration tests import the app. **Retry/Language re-download the audio by Telegram `file_id`** rather than keeping it server-side, preserving the "audio never retained" invariant; the per-transcript state behind the buttons (file id, model, language, segments) lives in an in-memory `SessionStore` keyed by `chatId:botMessageId` for 6 h. Inline buttons carry ≤64-byte versioned `callback_data` (`t1:retry:medium`); all menu transitions use `editMessageReplyMarkup`, because PDF-delivered transcripts have no editable text. **Text vs PDF:** rendered HTML ≤ `TELEGRAM_TEXT_LIMIT` (3000, under Telegram's 4096) → message; else pdfkit PDF with a ≤1024-char caption preview. pdfkit's built-in Helvetica is WinAnsi-only, so the image installs `fonts-dejavu-core` (Cyrillic/Greek; CJK/Arabic remain a documented PDF limit). A **serial queue** runs one transcription at a time (8 GB budget). The shared pieces (`json-file`, generic `SessionStore<T>`, `SenderStatsStore` with `{filename, normalizeKey}`) moved to `src/lib/` so neither bot imports the other. Security: token only ever sent to `api.telegram.org`, file downloads use `redirect:"manual"`, whitelist is deny-by-default on numeric user id, private chats only; the 20 MB bot download cap and 409-on-second-poller are surfaced rather than hidden.
 - **faster-whisper** over vanilla whisper -- faster on CPU, lower memory via CTranslate2 int8 quantization. Kept as the alternate engine + Parakeet fallback.
 - **Child process** approach -- Node spawns `python3 transcribe.py` per request. Simple, no IPC complexity. Fine for single-user use.
 - **Single HTML file per page** -- all CSS/JS inline, no build step for frontend. Keeps it minimal.
@@ -214,7 +250,7 @@ Body `{files: [{name, text}], zipName}` → returns `application/zip` attachment
 
 ### GET /api/version
 
-Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, hasDebugFixtures, hasWhatsApp}`. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; `hasDebugFixtures` reflects whether the debug fixtures dropdown is enabled; `hasWhatsApp` reflects whether WAHA is configured (`WAHA_BASE_URL` set) — gates the WhatsApp admin-page link in the footer/nav. Client uses these to gate UI controls.
+Returns `{commit, short, isReal, commitUrl, github, x, xHandle, hasServerKey, hasDebugFixtures, hasWhatsApp, hasTelegram}`. `hasServerKey` reflects whether `OPENROUTER_API_KEY` is set; `hasDebugFixtures` reflects whether the debug fixtures dropdown is enabled; `hasWhatsApp` reflects whether WAHA is configured (`WAHA_BASE_URL` set) — gates the WhatsApp admin-page link in the footer/nav; `hasTelegram` likewise for `TELEGRAM_BOT_TOKEN`. Client uses these to gate UI controls.
 
 ### WhatsApp endpoints (mounted by `mountWhatsApp`, only when `WAHA_BASE_URL` is set)
 
@@ -227,6 +263,16 @@ All under `/api/whatsapp`. No auth (intended to sit behind a VPN like the rest o
 - `GET /whitelist` / `PUT /whitelist` (`{numbers:[]}`) — read/replace the allow-list (deny-by-default; non-whitelisted senders are silently ignored).
 - `GET /settings` / `PUT /settings` — WhatsApp transcription defaults (`model`, `language`, `diarizeEnabled`).
 - `GET /stats` — per-day + per-sender usage for the admin dashboard.
+
+### Telegram endpoints (mounted by `mountTelegram`, only when `TELEGRAM_BOT_TOKEN` is set)
+
+All under `/api/telegram`. No auth (VPN). Inbound traffic is long polling, so there is no webhook route.
+
+- `GET /status` — `{ bot: getMe result | null, polling: { running, offset, lastPollAt, lastError, consecutiveErrors }, queue: { running, pending } }`.
+- `GET /whitelist` / `PUT /whitelist` (`{ids: number[]}`) — read/replace the user-id allow-list (deny-by-default; junk/non-numeric entries dropped).
+- `GET /settings` / `PUT /settings` — global defaults `{ model, language, diarizeEnabled, attrModel }` (validated).
+- `GET /users` / `DELETE /users/:id` — per-user `/model` / `/language` overrides.
+- `GET /stats` — per-day + per-user usage (with display names) for the admin page.
 
 ## Tunable env
 
@@ -252,6 +298,9 @@ All under `/api/whatsapp`. No auth (intended to sit behind a VPN like the rest o
 | `WHATSAPP_HOOK_URL`                                            | _(unset)_                   | Optional webhook URL passed to `ensureSession`. WAHA's own `WHATSAPP_HOOK_URL` env is the authoritative global hook.                                                                                |
 | `WHATSAPP_WEBHOOK_SECRET`                                      | _(unset)_                   | Webhook HMAC secret. When set, the webhook route requires a valid `X-Webhook-Hmac` (else `401`); compose wires the same value to WAHA's `WHATSAPP_HOOK_HMAC_KEY`. Unset = webhooks unauthenticated. |
 | `WHISPER_DEBUG_FIXTURES`                                       | `0`                         | Set `1` to expose `tests/fixtures/audio/*` as a dropdown + Run button in the UI. Compose mounts the fixtures dir at `/fixtures:ro`.                                                                 |
+| `TELEGRAM_BOT_TOKEN`                                           | _(unset)_                   | Bot token from @BotFather. **Set = Telegram bot on** (long polling starts from `server.ts`). Only ever sent to `api.telegram.org`; never logged.                                                    |
+| `TELEGRAM_TEXT_LIMIT`                                          | `3000`                      | Rendered reply length above which the transcript is sent as a PDF instead of a message (hard cap 4096).                                                                                             |
+| `TELEGRAM_PDF_FONT`                                            | DejaVu Sans                 | TTF for PDF transcripts; defaults to `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` (installed in the image), Helvetica fallback with a warning.                                                 |
 
 ## Development (without Docker)
 

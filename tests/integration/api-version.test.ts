@@ -23,6 +23,8 @@ describe("GET /api/version", () => {
       xHandle: expect.stringMatching(/^@/),
       hasServerKey: expect.any(Boolean),
       hasDebugFixtures: expect.any(Boolean),
+      hasWhatsApp: expect.any(Boolean),
+      hasTelegram: expect.any(Boolean),
     });
     expect(res.body.hasDiarize).toBeUndefined();
   });

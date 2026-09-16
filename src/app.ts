@@ -7,11 +7,13 @@ import archiver from "archiver";
 import { StatsStore } from "./stats";
 import { countWords } from "./lib/words";
 import { sanitizeZipName } from "./lib/sanitize";
-import { resolveEngine, PARAKEET_MODEL } from "./lib/engine";
+import { resolveEngine, PARAKEET_MODEL, VALID_MODELS } from "./lib/engine";
+import { VALID_LANGUAGES } from "./lib/languages";
 import { AttrSegment, AttrSpeaker } from "./lib/attribution";
 import { runTranscription, TranscribeError, TranscribeAbortError } from "./lib/transcribe-core";
 import { runAttribution, AttributeError } from "./lib/attribute-core";
 import { mountWhatsApp, isWhatsAppConfigured } from "./whatsapp";
+import { mountTelegram, isTelegramConfigured } from "./telegram";
 
 export const DATA_DIR = process.env.WHISPER_DATA_DIR || path.join(os.tmpdir(), "whisper-it-data");
 
@@ -42,8 +44,6 @@ export function startupSweep() {
   } catch {}
 }
 
-const VALID_MODELS = ["parakeet-v3", "tiny", "base", "small", "medium", "large-v3"];
-
 // Whisper model used when a Parakeet request forces an unsupported language.
 const PARAKEET_FALLBACK_MODEL =
   typeof process.env.WHISPER_PARAKEET_FALLBACK_MODEL === "string" &&
@@ -51,83 +51,6 @@ const PARAKEET_FALLBACK_MODEL =
   process.env.WHISPER_PARAKEET_FALLBACK_MODEL !== PARAKEET_MODEL
     ? process.env.WHISPER_PARAKEET_FALLBACK_MODEL
     : "small";
-const VALID_LANGUAGES = new Set([
-  "auto",
-  "en",
-  "es",
-  "fr",
-  "de",
-  "it",
-  "pt",
-  "nl",
-  "pl",
-  "ru",
-  "uk",
-  "tr",
-  "sv",
-  "da",
-  "no",
-  "fi",
-  "cs",
-  "hu",
-  "ro",
-  "el",
-  "bg",
-  "ja",
-  "ko",
-  "zh",
-  "ar",
-  "he",
-  "hi",
-  "bn",
-  "ur",
-  "fa",
-  "th",
-  "vi",
-  "id",
-  "ms",
-  "ta",
-  "te",
-  "ml",
-  "mr",
-  "gu",
-  "kn",
-  "pa",
-  "si",
-  "af",
-  "sw",
-  "am",
-  "yo",
-  "ig",
-  "ha",
-  "zu",
-  "xh",
-  "st",
-  "ca",
-  "gl",
-  "eu",
-  "cy",
-  "ga",
-  "is",
-  "sq",
-  "sr",
-  "hr",
-  "sk",
-  "sl",
-  "et",
-  "lv",
-  "lt",
-  "mk",
-  "be",
-  "mt",
-  "mn",
-  "kk",
-  "uz",
-  "az",
-  "hy",
-  "ka",
-  "ne",
-]);
 
 export const stats = new StatsStore(DATA_DIR);
 
@@ -331,6 +254,7 @@ app.get("/api/version", (_req, res) => {
     hasServerKey: !!(process.env.OPENROUTER_API_KEY || "").trim(),
     hasDebugFixtures: DEBUG_FIXTURES_ENABLED && fs.existsSync(FIXTURES_DIR),
     hasWhatsApp: isWhatsAppConfigured(),
+    hasTelegram: isTelegramConfigured(),
   });
 });
 
@@ -415,5 +339,12 @@ app.post("/api/zip", (req, res) => {
 
 // WhatsApp transcription (WAHA). No-op unless WAHA_BASE_URL is configured.
 mountWhatsApp(app, { dataDir: DATA_DIR, fallbackModel: PARAKEET_FALLBACK_MODEL });
+
+// Telegram transcription bot. No-op unless TELEGRAM_BOT_TOKEN is configured.
+// Polling starts only when server.ts calls telegram.start() (tests import app).
+export const telegram = mountTelegram(app, {
+  dataDir: DATA_DIR,
+  fallbackModel: PARAKEET_FALLBACK_MODEL,
+});
 
 export const COMMIT_INFO = { COMMIT, COMMIT_SHORT };
